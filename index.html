@@ -9,6 +9,7 @@
 <style>
   :root { --bg: #12141c; --panel: rgba(18, 20, 28, .82); --line: rgba(255, 255, 255, .1); --text: #f2f3f7; --dim: #9aa0b1; --hot: #ffcf33; }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; }
   canvas { position: fixed; inset: 0; display: block; cursor: grab; touch-action: none; }
   canvas:active { cursor: grabbing; }
@@ -73,6 +74,15 @@
   .card button { width: 100%; margin-top: 7px; padding: 10px; font-weight: 700; background: rgba(255, 255, 255, .07); border: 1px solid var(--line); border-radius: 9px; }
   #resume, #resume[hidden] + #again { color: #14161d; background: var(--hot); border: 0; }
   .card { max-height: 100%; overflow-y: auto; }
+  #start:disabled { opacity: .55; cursor: default; }
+  #netPanel input[type=text] { flex: 1; min-width: 0; padding: 7px 9px; font: inherit; color: inherit; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); border-radius: 7px; }
+  #netPanel button { padding: 8px 10px; font-size: 13px; font-weight: 700; background: rgba(255, 255, 255, .07); border: 1px solid var(--line); border-radius: 7px; }
+  #netCreate { width: 100%; }
+  .netRow { display: flex; gap: 6px; margin-top: 6px; }
+  #netPlayers { margin: 8px 0; padding: 0; list-style: none; font-size: 14px; }
+  #netPlayers li { padding: 3px 0; }
+  #netPlayers small { color: var(--dim); }
+  #netMsg { min-height: 1em; margin: 6px 0 0; font-size: 13px; color: var(--hot); }
   @media (max-width: 720px) {
     h1 { top: 12px; left: 16px; font-size: 20px; }
     #panel { top: auto; left: 16px; right: 16px; bottom: 16px; width: auto; max-height: 46vh; }
@@ -126,6 +136,21 @@
 <h1>Project <span>Kart</span></h1>
 <aside id="panel">
   <button id="start">Start race</button>
+  <div id="netPanel">
+    <h2>Race friends</h2>
+    <div id="netMenu">
+      <label>Your name <input type="text" id="netName" maxlength="12" autocomplete="off" spellcheck="false"></label>
+      <button id="netCreate">Create room</button>
+      <div class="netRow"><input type="text" id="netCode" placeholder="Room code" maxlength="8" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="netJoin">Join</button></div>
+    </div>
+    <div id="netRoom" hidden>
+      <div class="netRow"><input type="text" id="netLink" readonly><button id="netShare">Invite</button></div>
+      <ol id="netPlayers"></ol>
+      <label id="netCpuRow">Fill grid with CPUs <input type="checkbox" id="netCpu" checked></label>
+      <button id="netLeave">Leave room</button>
+    </div>
+    <p id="netMsg"></p>
+  </div>
   <h2>CPU level</h2>
   <div class="levels" id="levels"></div>
   <h2>Kart</h2>
@@ -170,6 +195,7 @@
 </div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <script>
 'use strict';
 const V3 = THREE.Vector3;
@@ -730,6 +756,7 @@ const state = {
 const $ = id => document.getElementById(id);
 const turnBox = $('turn'), spinBox = $('spin'), steerBox = $('steer'), numberBox = $('number');
 
+const net = { peer: null, host: false, room: '', me: '', up: null, conns: new Map(), players: [], ready: new Set(), goTimer: 0 };
 let kart = null;
 function rebuild() {
   if (kart) { stage.remove(kart.group); kart.dispose(); }
@@ -738,6 +765,7 @@ function rebuild() {
   document.querySelectorAll('.body').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.body));
   document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.paint.name));
   $('stats').innerHTML = Object.entries(BODIES[state.body].stats).map(([k, v]) => `<div class="stat">${k}<div class="bar"><i style="width:${v * 20}%"></i></div></div>`).join('');
+  netProfileChanged();
 }
 
 Object.entries(BODIES).forEach(([id, b]) => {
@@ -1163,28 +1191,44 @@ function placeOnTrack(k, i, lat) {
   k.yaw = k.moveYaw = yaw; k.idx = j; k.lat = lat; k.v = 0; k.drift = k.driftT = k.driftIn = 0; k.stuck = 0;
 }
 
-function startRace() {
+function makeCPU(name, opts, i, level) {
+  const [lo, hi] = LEVELS[level], k = makeRacer(name, opts, false);
+  k.topMul = lo + (hi - lo) * (i + 1) / CPU_NAMES.length;
+  k.lane = (i % 3 - 1) * 4;
+  return k;
+}
+
+function soloGrid() {
+  const paints = PAINTS.filter(p => p !== state.paint), ids = Object.keys(BODIES);
+  const karts = CPU_NAMES.map((name, i) => makeCPU(name, { body: ids[i % 3], paint: paints[i % paints.length], number: 11 + i * 7 }, i, state.level));
+  // You start at the back of the grid and race through the pack
+  karts.push(makeRacer('You', state, true));
+  return karts;
+}
+
+// Everyone builds the same grid from the host's list. You drive your own kart, the host drives the CPUs, and the rest are puppets.
+function onlineGrid(plan) {
+  return plan.racers.map((p, slot) => {
+    const opts = { body: p.body, paint: paintNamed(p.paint), number: p.number }, mine = p.id === net.me;
+    const k = p.cpu && net.host ? makeCPU(p.name, opts, slot, plan.level) : makeRacer(mine ? 'You' : p.name, opts, mine);
+    k.id = p.id; k.slot = slot; k.snaps = [];
+    if (!mine && !(p.cpu && net.host)) { k.remote = true; k.ai = false; }
+    return k;
+  });
+}
+
+function startRace(plan) {
   document.activeElement?.blur();
   if (!world) buildWorld();
   document.body.classList.add('racing');
   $('overlay').className = '';
-  const paints = PAINTS.filter(p => p !== state.paint), ids = Object.keys(BODIES), [lo, hi] = LEVELS[state.level];
-  const karts = [];
-  CPU_NAMES.forEach((name, i) => {
-    const k = makeRacer(name, { body: ids[i % 3], paint: paints[i % paints.length], number: 11 + i * 7 }, false);
-    k.topMul = lo + (hi - lo) * (i + 1) / CPU_NAMES.length;
-    k.lane = (i % 3 - 1) * 4;
-    karts.push(k);
-  });
-  // You start at the back of the grid and race through the pack
-  const you = makeRacer('You', state, true);
-  karts.push(you);
+  const karts = plan ? onlineGrid(plan) : soloGrid(), you = karts.find(k => k.isPlayer);
   karts.forEach((k, g) => {
     const back = 9 + g * 3.6;
     placeOnTrack(k, -Math.round(back / DS), g % 2 ? -4 : 4);
     k.total = -Math.round(back / DS);
   });
-  race = { karts, you, t: -3.6, over: false, paused: false, shownAt: 0, camYaw: you.yaw, camX: 0, camY: 0, camZ: 0, lastBeep: 4, lapShown: 1, flash: 0, doneT: 0 };
+  race = { karts, you, online: !!plan, waiting: !!plan, goAt: 0, t: -3.6, over: false, paused: false, shownAt: 0, camYaw: you.yaw, camX: 0, camY: 0, camZ: 0, lastBeep: 4, lapShown: 1, flash: 0, doneT: 0 };
   race.camX = you.x - Math.sin(you.yaw) * 9; race.camZ = you.z - Math.cos(you.yaw) * 9; race.camY = you.y + 4;
   renderer.toneMappingExposure = .92;
   drawMapBase();
@@ -1201,6 +1245,7 @@ function leaveRace() {
   document.body.classList.remove('racing');
   $('overlay').className = '';
   $('big').textContent = '';
+  $('banner').className = '';
   renderer.toneMappingExposure = .78;
 }
 
@@ -1292,7 +1337,8 @@ function stepKart(k, h) {
   if (k.ai && k.stuck > 2.5) placeOnTrack(k, k.idx, clamp(k.lat, -6, 6));
 
   if (k.finish === null && k.total >= LAPS * N) {
-    k.finish = race.t;
+    k.finish = race.online ? netClock() : race.t;
+    if (race.online) netFinished(k);
     if (k.isPlayer) finishPlayer();
   }
   k.lap = clamp(Math.floor(k.total / N) + 1, 1, LAPS);
@@ -1314,14 +1360,15 @@ function bumpKarts(h) {
 
 function stepRace(h) {
   const r = race;
-  r.t += h;
+  if (!r.waiting) r.t += h;
   if (r.t >= 0) {
     for (const k of r.karts) {
+      if (k.remote) continue;
       if (k.ai) thinkCPU(k, h); else readPlayer(k);
       stepKart(k, h);
     }
     bumpKarts(h);
-  } else for (const k of r.karts) { k.throttle = 0; stepKart(k, 0); }
+  } else for (const k of r.karts) { if (k.remote) continue; k.throttle = 0; stepKart(k, 0); }
 }
 
 function ranking() {
@@ -1350,16 +1397,33 @@ function drawResults() {
   const place = ranking().indexOf(race.you) + 1;
   const head = place === 1 ? 'You win!' : `You came ${ordinal(place)}`;
   const rows = ranking().map((k, i) => {
-    const t = k.finish !== null ? fmtTime(k.finish) : '~' + fmtTime(race.t * LAPS * N / Math.max(1, k.total));
-    return `<tr class="${k.isPlayer ? 'me' : ''}"><td>${i + 1}</td><td>${k.name}</td><td>${BODIES[k.body].name}</td><td>${t}</td></tr>`;
+    const t = k.finish !== null ? fmtTime(k.finish) : race.online ? 'Racing' : '~' + fmtTime(race.t * LAPS * N / Math.max(1, k.total));
+    return `<tr class="${k.isPlayer ? 'me' : ''}"><td>${i + 1}</td><td>${esc(k.name)}</td><td>${BODIES[k.body].name}</td><td>${t}</td></tr>`;
   }).join('');
   $('overlayBody').innerHTML = `<h3>${head}</h3><table>${rows}</table>`;
   $('resume').hidden = true;
+  $('again').hidden = race.online && !net.host;
+  setQuitLabel();
+}
+
+function setQuitLabel() {
+  $('quit').textContent = !race?.online ? 'Back to garage' : net.host ? 'Back to lobby (ends the race)' : 'Back to lobby';
 }
 
 function togglePause() {
   if (!race || race.over) return;
+  // Nobody can stop the clock on everyone else, so online this is a menu and the race carries on behind it
+  if (race.online) {
+    $('overlay').className = $('overlay').className ? '' : 'show';
+    $('overlayBody').innerHTML = '<h3>Race menu</h3><p>The race is still going!</p>';
+    $('resume').hidden = false;
+    $('again').hidden = true;
+    setQuitLabel();
+    return;
+  }
   race.paused = !race.paused;
+  $('again').hidden = false;
+  setQuitLabel();
   $('overlay').className = race.paused ? 'show' : '';
   $('overlayBody').innerHTML = '<h3>Paused</h3>';
   $('resume').hidden = false;
@@ -1389,7 +1453,7 @@ function drawHud() {
   const charge = you.drift ? clamp(you.driftT / 1.7, 0, 1) : 0;
   $('charge').style.width = charge * 100 + '%';
   $('charge').style.background = you.driftT > 1.7 ? '#ff8a1f' : you.driftT > .75 ? '#39b6ff' : '#cfd3dc';
-  const board = order.map((k, i) => `<li class="${k.isPlayer ? 'me' : ''}">${i + 1} ${k.name}</li>`).join('');
+  const board = order.map((k, i) => `<li class="${k.isPlayer ? 'me' : ''}">${i + 1} ${esc(k.name)}</li>`).join('');
   if (board !== r.board) $('board').innerHTML = r.board = board;
   if (r.t < 0) $('big').textContent = r.t > -3 ? Math.ceil(-r.t) : '';
   else if (r.t < 1 && !r.over) $('big').textContent = 'GO!';
@@ -1450,9 +1514,12 @@ function placeRaceCam(dt) {
 function raceFrame(dt) {
   const r = race;
   if (!r.paused) {
+    // A slow phone must not count down slower than everyone else
+    if (r.online && !r.waiting && r.t < 0) r.t = Math.max(r.t, netClock());
     const n = Math.max(1, Math.ceil(dt * 60));
     for (let i = 0; i < n && race; i++) stepRace(dt / n);
     if (!race) return;
+    if (r.online) netInterpolate();
     for (const k of r.karts) renderKart(k, dt);
     stepParticles(dt);
     world.padTex.offset.y -= dt * 1.5;
@@ -1478,9 +1545,13 @@ const sound = (() => {
   let ctx = null, osc = null, gain = null, muted = false;
   try { muted = localStorage.getItem('kart-muted') === '1'; } catch (e) {}
   return {
-    start() {
+    // Phones only allow sound after a tap, and an online race starts from the host's tap, not yours
+    unlock() {
       ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
       ctx.resume();
+    },
+    start() {
+      this.unlock();
       if (osc) return;
       osc = ctx.createOscillator(); gain = ctx.createGain();
       const f = ctx.createBiquadFilter();
@@ -1570,7 +1641,7 @@ if (TOUCH) {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) return;
   releaseTouch();
-  if (race && !race.paused) togglePause();
+  if (race && !race.paused && !race.online) togglePause();
 });
 
 Object.keys(LEVELS).forEach(name => {
@@ -1580,10 +1651,17 @@ Object.keys(LEVELS).forEach(name => {
   btn.setAttribute('aria-pressed', state.level === name);
   $('levels').append(btn);
 });
-$('start').onclick = startRace;
+$('start').onclick = () => { if (!net.room) startRace(); else if (net.host) netStartRace(); };
 $('resume').onclick = togglePause;
-$('again').onclick = () => { leaveRace(); startRace(); };
-$('quit').onclick = leaveRace;
+$('again').onclick = () => {
+  if (race?.online) netStartRace();
+  else { leaveRace(); startRace(); }
+};
+$('quit').onclick = () => {
+  if (!race?.online) leaveRace();
+  else if (net.host) { netBroadcast({ t: 'end' }); leaveRace(); netMessage(''); }
+  else { netToHost({ t: 'left' }); leaveRace(); netMessage('Waiting for the next race'); }
+};
 
 addEventListener('resize', () => {
   camera.aspect = raceCam.aspect = innerWidth / innerHeight;
@@ -1591,6 +1669,308 @@ addEventListener('resize', () => {
   raceCam.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
+
+// ---------- Racing friends ----------
+// Peer-to-peer over WebRTC, with the host's browser in the middle. Each player's browser drives its own kart and
+// reports where it is. The host passes that on to everyone, drives the CPUs, and rules on who finished when.
+const ROOM_PREFIX = 'project-kart-', MAX_PLAYERS = 8;
+const SEND_MS = 66, RENDER_DELAY = 170, COAST_MS = 300, READY_WAIT = 10000;
+const esc = t => String(t).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+const paintNamed = name => PAINTS.find(p => p.name === name) || PAINTS[0];
+const round = (v, places) => +v.toFixed(places);
+const netClock = () => race && race.goAt ? (performance.now() - race.goAt) / 1000 - 3.6 : -3.6;
+
+function myProfile() {
+  return { name: $('netName').value.trim() || 'Player', body: state.body, paint: state.paint.name, number: state.number };
+}
+// Everything below can come from a stranger with the room code, so nothing gets used until it has been checked
+function cleanPlayer(p) {
+  return {
+    id: String(p?.id ?? '').slice(0, 64), name: String(p?.name ?? '').trim().slice(0, 12) || 'Player',
+    body: BODIES[p?.body] ? p.body : 'sprint', paint: paintNamed(p?.paint).name,
+    number: clamp(Math.round(+p?.number) || 0, 0, 99), cpu: p?.cpu === true,
+  };
+}
+function netMessage(text) { $('netMsg').textContent = text; }
+function netToHost(msg) { if (net.up?.open) try { net.up.send(msg); } catch (e) {} }
+function netBroadcast(msg, except) {
+  for (const [id, c] of net.conns) if (id !== except && c.open) try { c.send(msg); } catch (e) {}
+}
+
+function drawRoom() {
+  const inRoom = !!net.room;
+  $('netMenu').hidden = inRoom;
+  $('netRoom').hidden = !inRoom;
+  $('netCpuRow').hidden = !net.host;
+  $('start').disabled = inRoom && !net.host;
+  $('start').textContent = !inRoom ? 'Start race' : net.host ? `Start race (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
+  if (!inRoom) return;
+  $('netLink').value = location.origin + location.pathname + '?r=' + net.room;
+  $('netPlayers').innerHTML = net.players.map((p, i) => `<li>${esc(p.name)} <small>${BODIES[p.body].name}${i === 0 ? ', host' : ''}${p.id === net.me ? ', you' : ''}</small></li>`).join('');
+}
+function netProfileChanged() {
+  if (!net.room) return;
+  const me = net.players.find(p => p.id === net.me);
+  if (me) Object.assign(me, myProfile());
+  if (net.host) netSendRoster(); else netToHost({ t: 'me', ...myProfile() });
+  drawRoom();
+}
+function netSendRoster() { netBroadcast({ t: 'roster', players: net.players }); }
+
+function netPeer(id) {
+  // The public PeerJS server only introduces the browsers. The race itself goes directly between them.
+  return new Peer(id, { debug: 0, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } });
+}
+function peerProblem(e) {
+  const type = e?.type;
+  if (type === 'peer-unavailable') return 'No room with that code';
+  if (type === 'unavailable-id') return 'That room code is taken, try again';
+  if (type === 'network' || type === 'server-error' || type === 'socket-error') return 'Could not reach the room server';
+  return 'Connection problem, try again';
+}
+function netReady() {
+  if (typeof Peer === 'undefined') { netMessage('Could not load online play, check your connection'); return false; }
+  try { localStorage.setItem('kart-name', $('netName').value.trim()); } catch (e) {}
+  sound.unlock();
+  return true;
+}
+
+function netCreate() {
+  if (!netReady()) return;
+  netReset('');
+  const code = Math.random().toString(36).slice(2, 7);
+  netMessage('Opening room…');
+  net.peer = netPeer(ROOM_PREFIX + code);
+  net.peer.on('open', id => {
+    Object.assign(net, { host: true, room: code, me: id, players: [cleanPlayer({ id, ...myProfile() })] });
+    netMessage('Send friends the invite link');
+    drawRoom();
+  });
+  net.peer.on('error', e => netMessage(peerProblem(e)));
+  net.peer.on('connection', conn => {
+    conn.on('data', d => onHostData(conn, d));
+    conn.on('close', () => netDrop(conn.peer));
+    conn.on('error', () => netDrop(conn.peer));
+  });
+}
+
+function netJoin() {
+  const code = $('netCode').value.trim().toLowerCase();
+  if (!code) { netMessage('Enter a room code'); return; }
+  if (!netReady()) return;
+  netReset('');
+  netMessage('Joining…');
+  net.peer = netPeer(undefined);
+  net.peer.on('open', id => {
+    net.me = id;
+    const conn = net.up = net.peer.connect(ROOM_PREFIX + code, { reliable: true });
+    conn.on('open', () => conn.send({ t: 'join', ...myProfile() }));
+    conn.on('data', d => onGuestData(d, code));
+    conn.on('close', () => { if (net.room) netReset('The host left the room'); });
+    conn.on('error', () => netMessage('Connection failed'));
+    setTimeout(() => { if (net.up === conn && !conn.open) netMessage('No answer. Check the code, or try a different network'); }, 12000);
+  });
+  net.peer.on('error', e => netMessage(peerProblem(e)));
+}
+
+function netReset(message) {
+  if (race?.online) leaveRace();
+  clearTimeout(net.goTimer);
+  const peer = net.peer;
+  Object.assign(net, { peer: null, host: false, room: '', me: '', up: null, players: [] });
+  net.conns.clear();
+  if (peer) try { peer.destroy(); } catch (e) {}
+  netMessage(message);
+  drawRoom();
+}
+
+function racerById(id) { return race?.online ? race.karts.find(k => k.id === id) : null; }
+function dropRacer(k) {
+  if (!k || !race) return;
+  race.karts.splice(race.karts.indexOf(k), 1);
+  world.scene.remove(k.view.group);
+  k.view.dispose();
+}
+
+function netDrop(id) {
+  if (!net.conns.delete(id)) return;
+  const left = net.players.find(p => p.id === id);
+  net.players = net.players.filter(p => p.id !== id);
+  dropRacer(racerById(id));
+  netBroadcast({ t: 'gone', id });
+  netSendRoster();
+  if (left) netMessage(left.name + ' left');
+  drawRoom();
+  netCheckReady();
+}
+
+function onHostData(conn, d) {
+  if (!d || typeof d !== 'object') return;
+  const you = net.players.find(p => p.id === conn.peer);
+  if (d.t === 'join') {
+    if (you) return;
+    if (net.players.length >= MAX_PLAYERS) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
+    const player = cleanPlayer({ ...d, id: conn.peer, cpu: false });
+    net.conns.set(conn.peer, conn);
+    net.players.push(player);
+    conn.send({ t: 'welcome', players: net.players, racing: !!race?.online });
+    netSendRoster();
+    drawRoom();
+    return;
+  }
+  if (!you) return;
+  if (d.t === 'me') {
+    Object.assign(you, cleanPlayer({ ...d, id: conn.peer, cpu: false }));
+    netSendRoster();
+    drawRoom();
+  } else if (d.t === 'ready') {
+    net.ready.add(conn.peer);
+    netCheckReady();
+  } else if (d.t === 'u') {
+    netStore(racerById(conn.peer), d.s);
+  } else if (d.t === 'fin') {
+    const k = racerById(conn.peer);
+    if (k && k.finish === null) { k.finish = Math.max(0, netClock()); netBroadcast({ t: 'fin', slot: k.slot, at: k.finish }); }
+  } else if (d.t === 'left') {
+    dropRacer(racerById(conn.peer));
+    netBroadcast({ t: 'gone', id: conn.peer });
+  }
+}
+
+function onGuestData(d, code) {
+  if (!d || typeof d !== 'object') return;
+  const list = () => Array.isArray(d.players) ? d.players.slice(0, MAX_PLAYERS).map(cleanPlayer) : [];
+  switch (d.t) {
+    case 'welcome':
+      net.room = code; net.players = list();
+      netMessage(d.racing ? 'A race is running, you are in the next one' : 'You are in! Waiting for the host');
+      drawRoom();
+      break;
+    case 'roster': net.players = list(); drawRoom(); break;
+    case 'full': netReset('That room is full'); break;
+    case 'start': {
+      const racers = Array.isArray(d.racers) ? d.racers.slice(0, MAX_PLAYERS).map(cleanPlayer) : [];
+      if (!racers.some(p => p.id === net.me)) break;
+      netBegin({ racers });
+      netToHost({ t: 'ready' });
+      break;
+    }
+    case 'go': netGo(); break;
+    case 's':
+      if (race?.online && Array.isArray(d.a)) for (const snap of d.a) netStore(race.karts.find(k => k.slot === snap?.[0]), snap);
+      break;
+    case 'fin': {
+      const k = race?.online && race.karts.find(o => o.slot === d.slot);
+      if (k && isFinite(d.at)) k.finish = +d.at;
+      break;
+    }
+    case 'gone': dropRacer(racerById(d.id)); break;
+    case 'end':
+      if (race?.online) { leaveRace(); netMessage('The host ended the race'); }
+      break;
+  }
+}
+
+function netStartRace() {
+  const ids = Object.keys(BODIES), cpus = [];
+  if ($('netCpu').checked) {
+    const paints = PAINTS.map(p => p.name);
+    for (let i = 0; i < MAX_PLAYERS - net.players.length; i++) cpus.push(cleanPlayer({ id: 'cpu' + i, name: CPU_NAMES[i], body: ids[i % 3], paint: paints[i % paints.length], number: 11 + i * 7, cpu: true }));
+  }
+  // Friends start at the back, like you do against the CPUs
+  const racers = [...cpus, ...net.players], level = state.level;
+  netBroadcast({ t: 'start', racers });
+  netBegin({ racers, level });
+  net.ready = new Set([net.me]);
+  clearTimeout(net.goTimer);
+  net.goTimer = setTimeout(netGoAll, READY_WAIT);
+  netCheckReady();
+}
+function netBegin(plan) {
+  if (race) leaveRace();
+  startRace(plan);
+  $('banner').textContent = 'Waiting for everyone';
+  $('banner').className = 'on';
+}
+function netCheckReady() {
+  if (net.host && race?.waiting && net.players.every(p => net.ready.has(p.id))) netGoAll();
+}
+function netGoAll() {
+  clearTimeout(net.goTimer);
+  if (!race?.waiting) return;
+  netBroadcast({ t: 'go' });
+  netGo();
+}
+function netGo() {
+  if (!race?.waiting) return;
+  race.waiting = false;
+  race.goAt = performance.now();
+  $('banner').className = '';
+}
+
+function netFinished(k) {
+  if (net.host) netBroadcast({ t: 'fin', slot: k.slot, at: k.finish });
+  else netToHost({ t: 'fin' });
+}
+
+const SNAP_LEN = 13;
+function netSnapshot(k) {
+  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total];
+}
+function netStore(k, snap) {
+  if (!k?.remote || !Array.isArray(snap) || snap.length !== SNAP_LEN || !snap.every(Number.isFinite)) return;
+  k.snaps.push({ at: performance.now(), a: snap });
+  if (k.snaps.length > 16) k.snaps.shift();
+}
+// Timers rather than the frame loop, so a host on another tab keeps passing on positions
+function netTick() {
+  if (!race?.online || race.waiting) return;
+  // Pass friends' karts on exactly as they arrived: the smoothed positions on this screen are already a little old
+  if (net.host) netBroadcast({ t: 's', a: race.karts.map(k => k.remote ? k.snaps[k.snaps.length - 1]?.a : netSnapshot(k)).filter(Boolean) });
+  else netToHost({ t: 'u', s: netSnapshot(race.you) });
+}
+setInterval(netTick, SEND_MS);
+
+// Show other karts slightly in the past, so there are always two known positions to glide between
+function netInterpolate() {
+  const when = performance.now() - RENDER_DELAY;
+  for (const k of race.karts) {
+    if (!k.remote || !k.snaps.length) continue;
+    const list = k.snaps;
+    let i = list.length - 1;
+    while (i > 0 && list[i - 1].at > when) i--;
+    const b = list[i].a, a = i > 0 ? list[i - 1].a : b, span = i > 0 ? list[i].at - list[i - 1].at : 0;
+    const f = span > 0 ? clamp((when - list[i - 1].at) / span, 0, 1) : 1, mix = n => a[n] + (b[n] - a[n]) * f;
+    k.x = mix(1); k.y = mix(2); k.z = mix(3);
+    k.yaw = k.moveYaw = wrapA(a[4] + wrapA(b[4] - a[4]) * f);
+    k.v = mix(5); k.steer = mix(6); k.drift = b[7]; k.driftT = b[8]; k.driftIn = k.drift ? Math.min(1, k.driftIn + .04) : 0;
+    k.boostT = b[9]; k.hopY = Math.max(0, mix(10)); k.pitch = mix(11); k.total = b[12];
+    // A short gap in the connection: keep rolling rather than stop dead
+    const late = clamp(when - list[list.length - 1].at, 0, COAST_MS) / 1000;
+    if (i === list.length - 1 && late > 0) { k.x += Math.sin(k.yaw) * k.v * late; k.z += Math.cos(k.yaw) * k.v * late; }
+    const loc = locate(k.x, k.z, k.idx, 60);
+    k.idx = loc.i; k.lat = loc.lat; k.onRoad = Math.abs(loc.lat) <= HW + 1.5;
+  }
+}
+
+try { $('netName').value = localStorage.getItem('kart-name') || ''; } catch (e) {}
+$('netName').oninput = () => { if (net.room) netProfileChanged(); };
+$('netCreate').onclick = netCreate;
+$('netJoin').onclick = netJoin;
+$('netCode').onkeydown = e => { if (e.key === 'Enter') netJoin(); };
+$('netLeave').onclick = () => netReset('');
+$('netShare').onclick = async () => {
+  const url = $('netLink').value;
+  try {
+    if (TOUCH && navigator.share) await navigator.share({ title: 'Race me in Project Kart', url });
+    else { await navigator.clipboard.writeText(url); netMessage('Link copied, send it to your friends'); }
+  } catch (e) { $('netLink').select(); }
+};
+{
+  const code = new URLSearchParams(location.search).get('r');
+  if (code) { $('netCode').value = code.slice(0, 8); netMessage('Friend invite! Add your name and press Join'); }
+}
+drawRoom();
 
 let prev = performance.now(), steer = 0;
 function frame(now) {
