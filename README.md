@@ -1,5 +1,7 @@
 # Project Kart
 
+**[Play now](https://itzfireway.github.io/project-kart/)**
+
 A Mario Kart-style racer in a single HTML file. Pick a kart in the garage, then race 3 laps against 7 CPUs.
 
 **Computer:** arrow keys or WASD to drive, Shift or Space to drift, R to get back on track, Esc to pause, M to mute.
