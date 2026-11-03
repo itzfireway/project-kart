@@ -139,6 +139,14 @@
   body.touch #itemName { font-size: 11px; }
   body.touch #lights { top: 30%; gap: 8px; padding: 7px 10px; }
   body.touch #lights i { width: 28px; height: 28px; }
+  body.touch .devOnly { display: none; }
+  #rotateTip { display: none; }
+  /* Portrait phones: the top row is full of buttons and the bottom is full of thumbs, so the item slot and button move */
+  @media (orientation: portrait) {
+    body.touch #item { top: calc(62px + env(safe-area-inset-top)); }
+    body.touch #itemBtn { right: calc(30px + env(safe-area-inset-right)); bottom: calc(222px + env(safe-area-inset-bottom)); width: 72px; height: 72px; }
+    body.touch #rotateTip { display: block; margin-top: 8px; color: var(--hot); }
+  }
   body.touch #tl { top: calc(8px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); }
   body.touch #pos { font-size: 42px; }
   body.touch #pos sup { font-size: 16px; }
@@ -202,10 +210,10 @@
   <label>Race number <input type="number" id="number" min="0" max="99" value="7"></label>
   <h2>View</h2>
   <div class="views" id="views"></div>
-  <h2>Test</h2>
-  <label>Steer <input type="range" id="steer" min="-1" max="1" step=".01" value="0"></label>
-  <label>Spin wheels <input type="checkbox" id="spin"></label>
-  <label>Turntable <input type="checkbox" id="turn" checked></label>
+  <h2 class="devOnly">Test</h2>
+  <label class="devOnly">Steer <input type="range" id="steer" min="-1" max="1" step=".01" value="0"></label>
+  <label class="devOnly">Spin wheels <input type="checkbox" id="spin"></label>
+  <label class="devOnly">Turntable <input type="checkbox" id="turn" checked></label>
 </aside>
 
 <div id="hud">
@@ -1287,6 +1295,7 @@ function useItem(k) {
     const order = ranking(), at = order.indexOf(k), target = at > 0 ? order[at - 1] : null;
     fire({ k: 'rocket', slot: k.slot, s: k.total + 3 / DS, lat: k.lat, target: target ? target.slot : -1 });
   } else if (kind === 'zap') fire({ k: 'zap', slot: k.slot });
+  if (k.isPlayer) buzz(35);
   if (k.isPlayer || near(k, 60)) sound.sfx(kind === 'triple' ? 'turbo' : kind, k.isPlayer ? 1 : .5);
 }
 
@@ -1343,7 +1352,7 @@ function hit(k) {
     return false;
   }
   k.spinT = SPIN; k.v *= .4; k.drift = 0; k.driftT = 0; k.boostT = 0;
-  if (k.isPlayer) { race.shake = .6; flash('hit'); sound.sfx('bonk'); }
+  if (k.isPlayer) { race.shake = .6; flash('hit'); sound.sfx('bonk'); buzz([60, 40, 90]); }
   return true;
 }
 
@@ -1362,7 +1371,7 @@ function stepBlocks(h) {
       if (dx * dx + dz * dz > 5.6 || Math.abs(k.y + .6 - b.y) > 2.6) continue;
       b.down = 2.6; b.grow = 0;
       if (near(k, 90)) burst(b.x, b.y, b.z, 26);
-      if (k.isPlayer) sound.sfx('box');
+      if (k.isPlayer) { sound.sfx('box'); buzz(25); }
       if (!k.remote) giveItem(k);
       break;
     }
@@ -1472,6 +1481,7 @@ function makeCPU(name, opts, i, level) {
   const [lo, hi] = LEVELS[level], k = makeRacer(name, opts, false);
   k.topMul = lo + (hi - lo) * (i + 1) / CPU_NAMES.length;
   k.lane = (i % 3 - 1) * 4;
+  k.driftSkill = { Easy: .35, Normal: .65, Hard: .9 }[level] ?? .65;
   return k;
 }
 
@@ -1557,6 +1567,17 @@ function thinkCPU(k, h) {
   // Head for a boost pad when one is coming up
   let lane = k.lane;
   for (const p of PADS) { const ahead = wrapI(p.i - k.idx) * DS; if (ahead < 70) { lane = p.lat; break; } }
+  // With an empty item slot, aim for the nearest ? block in the next row
+  if (race.items && !k.item && k.roll <= 0) for (const row of BLOCK_ROWS) {
+    const ahead = wrapI(row - k.idx) * DS;
+    if (ahead > 4 && ahead < 60) { lane = BLOCK_LATS.reduce((a, b) => Math.abs(b - k.lat) < Math.abs(a - k.lat) ? b : a); break; }
+  }
+  // Steer round oil slicks
+  for (const f of race.fx) {
+    if (f.k !== 'oil') continue;
+    const l = locate(f.x, f.z, k.idx, 40), ahead = wrapI(l.i - k.idx) * DS;
+    if (ahead > 0 && ahead < 40 && Math.abs(l.lat - lane) < 3.2) lane = l.lat + (l.lat > 0 ? -4 : 4);
+  }
   // Pull out around anyone close ahead
   for (const o of karts) {
     if (o === k) continue;
@@ -1572,7 +1593,23 @@ function thinkCPU(k, h) {
   const want = Math.min(vmax[k.idx], 60) * Math.min(1.05, k.topMul * k.rubber + .06);
   k.throttle = k.v < want ? 1 : 0;
   k.brake = k.v > want + 2.5 ? 1 : 0;
-  k.wantDrift = false;
+
+  // Drifting: start into a proper corner, hold while it keeps bending the same way, and let go once the
+  // charge is good or the road straightens. Harder CPUs commit to more corners.
+  const bend = kap[wrapI(k.idx + Math.round(12 / DS))], bendNow = kap[k.idx];
+  if (!k.drift) {
+    k.wantDrift = false;
+    k.driftCool = Math.max(0, (k.driftCool || 0) - h);
+    if (k.driftCool <= 0 && k.v > 16 && Math.abs(bend) > .013 && Math.abs(k.wantSteer) > .3 && Math.sign(k.wantSteer) === Math.sign(bend)) {
+      if (Math.random() < k.driftSkill) k.wantDrift = true;
+      else k.driftCool = 1.5;   // skipped this one, don't reroll every frame
+    }
+  } else {
+    const straight = Math.abs(bendNow) < .006 && Math.abs(bend) < .008, wrongWay = Math.sign(bend) === -k.drift && Math.abs(bend) > .006;
+    const charged = k.driftT > 1.8 && Math.abs(bend) < .01;
+    k.wantDrift = !(straight || wrongWay || charged || k.driftT > 3 || Math.abs(k.lat) > HW - 1.2 && k.driftT > .3);
+    if (!k.wantDrift) k.driftCool = .8;
+  }
 
   // Items: turbos on a straight, oil when someone is right behind, rockets when someone is in range ahead
   k.wantItem = false;
@@ -1927,7 +1964,7 @@ function raceFrame(dt) {
     }
     // A whoosh whenever your boost kicks in
     const boosting = r.you.boostT > 0;
-    if (boosting && !r.wasBoost) sound.sfx('whoosh');
+    if (boosting && !r.wasBoost) { sound.sfx('whoosh'); buzz(30); }
     r.wasBoost = boosting;
     sound.engine(r.you);
     placeRaceCam(dt);
@@ -2058,6 +2095,13 @@ const sound = (() => {
   };
 })();
 
+// A short buzz on phones that support it (Android; iPhones ignore this)
+function buzz(ms) { if (TOUCH && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) {} }
+// On Android, racing goes full screen and sideways. iPhones can't do either from a web page.
+function goFullscreen() {
+  if (!TOUCH || document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+  document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+}
 function toggleSound() { $('muteBtn').classList.toggle('off', sound.toggle()); }
 function backOnTrack() {
   if (race && !race.paused && !race.over && race.t > 0) placeOnTrack(race.you, race.you.idx, clamp(race.you.lat, -6, 6));
@@ -2115,7 +2159,7 @@ $('resetBtn').onclick = backOnTrack;
 $('muteBtn').onclick = toggleSound;
 $('muteBtn').classList.toggle('off', sound.muted);
 if (TOUCH) {
-  $('help').textContent = 'Your kart goes by itself. Slide your left thumb to steer. Hold Drift through corners and let go for a boost. Drive through ? blocks and tap Item.';
+  $('help').innerHTML = 'Your kart goes by itself. Slide your left thumb to steer. Hold Drift through corners and let go for a boost. Drive through ? blocks and tap Item.<span id="rotateTip">Turn your phone sideways for a wider view</span>';
   addEventListener('contextmenu', e => e.preventDefault());
   document.addEventListener('gesturestart', e => e.preventDefault());
 }
@@ -2147,13 +2191,14 @@ $('musicBox').onchange = () => {
   state.music = $('musicBox').checked; saveRaceOptions();
   if (!state.music) sound.stopMusic(); else if (race && race.t > 0 && !race.over) sound.startMusic();
 };
-$('start').onclick = () => { if (!net.room) startRace(); else if (net.host) netStartRace(); };
+$('start').onclick = () => { goFullscreen(); if (!net.room) startRace(); else if (net.host) netStartRace(); };
 $('resume').onclick = togglePause;
 $('again').onclick = () => {
   if (race?.online) netStartRace();
   else { leaveRace(); startRace(); }
 };
 $('quit').onclick = () => {
+  try { screen.orientation?.unlock?.(); } catch (e) {}
   if (!race?.online) leaveRace();
   else if (net.host) { netBroadcast({ t: 'end' }); leaveRace(); netMessage(''); }
   else { netToHost({ t: 'left' }); leaveRace(); netMessage('Waiting for the next race'); }
@@ -2472,7 +2517,7 @@ function netInterpolate() {
 try { $('netName').value = localStorage.getItem('kart-name') || ''; } catch (e) {}
 $('netName').oninput = () => { if (net.room) netProfileChanged(); };
 $('netCreate').onclick = netCreate;
-$('netJoin').onclick = netJoin;
+$('netJoin').onclick = () => { goFullscreen(); netJoin(); };
 $('netCode').onkeydown = e => { if (e.key === 'Enter') netJoin(); };
 $('netLeave').onclick = () => netReset('');
 $('netShare').onclick = async () => {
