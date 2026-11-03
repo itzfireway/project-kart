@@ -91,6 +91,10 @@
   #item.roll { border-color: #fff; }
   #item.has #itemIcon { animation: pop .3s ease-out; }
   #itemCount { position: absolute; right: 6px; bottom: 2px; font-size: 17px; font-weight: 900; font-style: italic; }
+  #item2 { position: absolute; top: 28px; left: 50%; width: 56px; height: 56px; margin-left: 50px; display: flex; align-items: center; justify-content: center; font-size: 30px; font-style: normal; background: rgba(18, 20, 28, .5); border: 2px solid rgba(255, 255, 255, .35); border-radius: 13px; }
+  #item2.has { border-color: rgba(255, 207, 51, .8); }
+  #item2.roll { border-color: #fff; }
+  #item2Count { position: absolute; right: 3px; bottom: 0; font-size: 12px; font-weight: 900; font-style: italic; }
   #itemName { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 5px; white-space: nowrap; font-size: 13px; font-style: italic; text-transform: uppercase; }
   #lights { position: absolute; top: 9%; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; padding: 10px 14px; background: #14161d; border: 3px solid #2c2f3a; border-radius: 40px; }
   #lights i { width: 42px; height: 42px; border-radius: 50%; background: #3b1414; transition: background .08s, box-shadow .08s; }
@@ -137,6 +141,7 @@
   body.touch #item { top: calc(8px + env(safe-area-inset-top)); width: 58px; height: 58px; margin-left: -29px; font-size: 30px; border-radius: 14px; }
   body.touch #itemCount { font-size: 13px; right: 3px; bottom: 0; }
   body.touch #itemName { font-size: 11px; }
+  body.touch #item2 { top: calc(16px + env(safe-area-inset-top)); width: 42px; height: 42px; margin-left: 35px; font-size: 22px; border-radius: 10px; }
   body.touch #lights { top: 30%; gap: 8px; padding: 7px 10px; }
   body.touch #lights i { width: 28px; height: 28px; }
   body.touch .devOnly { display: none; }
@@ -144,6 +149,7 @@
   /* Portrait phones: the top row is full of buttons and the bottom is full of thumbs, so the item slot and button move */
   @media (orientation: portrait) {
     body.touch #item { top: calc(62px + env(safe-area-inset-top)); }
+    body.touch #item2 { top: calc(70px + env(safe-area-inset-top)); }
     body.touch #itemBtn { right: calc(30px + env(safe-area-inset-right)); bottom: calc(222px + env(safe-area-inset-bottom)); width: 72px; height: 72px; }
     body.touch #rotateTip { display: block; margin-top: 8px; color: var(--hot); }
   }
@@ -221,6 +227,7 @@
   <div id="flash"></div>
   <div id="lights" hidden><i></i><i></i><i></i></div>
   <div id="item" hidden><span id="itemIcon"></span><small id="itemCount"></small><span id="itemName"></span></div>
+  <div id="item2" hidden><span id="item2Icon"></span><small id="item2Count"></small></div>
   <div id="tl"><div id="pos"></div><div id="lap"></div><div id="clock"></div></div>
   <ol id="board"></ol>
   <div id="big"></div>
@@ -971,6 +978,46 @@ function ribbon(from, to, latA, latB, lift, mat, tiles, parent, step = 1) {
 }
 
 const PAD_SPEED = 1.15, PAD_TIME = 2.5;
+
+// ---------- Shortcuts and ramps ----------
+// A shortcut is a narrow dirt lane that leaves the road at sample a and rejoins it at sample b. While you are on it,
+// progress is measured along the lane and mapped back onto the main track, so laps and positions still work.
+const SC_HW = 4.6;
+const SHORTCUTS = [[160, 240], [730, 850]].map(([a, b], id) => {
+  const mx = (cx[a] + cx[b]) / 2, mz = (cz[a] + cz[b]) / 2;
+  const sideOf = i => Math.sign((mx - cx[i]) * nxOf(i) + (mz - cz[i]) * nzOf(i)) || 1;
+  const edge = (i, side) => v3(cx[i] + nxOf(i) * side * (HW - 1), 0, cz[i] + nzOf(i) * side * (HW - 1));
+  const sa = sideOf(a), sb = sideOf(b), A = edge(a, sa), B = edge(b, sb), dir = B.clone().sub(A).normalize();
+  // Leave and rejoin at a gentle angle: the lane starts off following the road, then heads across
+  const ta = v3(tx[a], 0, tz[a]), tb = v3(tx[b], 0, tz[b]);
+  const A1 = A.clone().addScaledVector(ta.clone().multiplyScalar(.55).addScaledVector(dir, .45).normalize(), 12);
+  const B1 = B.clone().addScaledVector(tb.clone().multiplyScalar(.55).addScaledVector(dir, .45).normalize(), -12);
+  const curve = new THREE.CatmullRomCurve3([A, A1, B1, B], false, 'centripetal');
+  const M = Math.round(curve.getLength()), raw = curve.getSpacedPoints(M);
+  const pts = raw.map((q, i) => ({ x: q.x, z: q.z, y: cy[a] + (cy[b] - cy[a]) * smooth(0, 1, i / M), tx: 0, tz: 0 }));
+  pts.forEach((q, i) => {
+    const n = pts[Math.min(M, i + 1)], o = pts[Math.max(0, i - 1)], l = Math.hypot(n.x - o.x, n.z - o.z) || 1;
+    q.tx = (n.x - o.x) / l; q.tz = (n.z - o.z) / l;
+  });
+  return { id, a, b, sa, span: wrapI(b - a), pts, M };
+});
+// Nearest lane point to (x, z), searching i0..i1. lat is positive to the left of the lane.
+function scLocate(sc, x, z, i0, i1) {
+  let best = 1e12, bi = i0;
+  for (let i = Math.max(0, i0); i <= Math.min(sc.M, i1); i++) { const q = sc.pts[i], d = (x - q.x) ** 2 + (z - q.z) ** 2; if (d < best) { best = d; bi = i; } }
+  const q = sc.pts[bi];
+  return { i: bi, d: Math.sqrt(best), lat: (x - q.x) * q.tz - (z - q.z) * q.tx };
+}
+function scNear(x, z) {
+  let best = 1e12, y = 0;
+  for (const sc of SHORTCUTS) for (const q of sc.pts) { const d = (x - q.x) ** 2 + (z - q.z) ** 2; if (d < best) { best = d; y = q.y; } }
+  return { d: Math.sqrt(best), y };
+}
+
+// Ramps sit on one half of the road. Drive up one and you take off; press drift in the air for a trick, and you
+// get a small boost when you land.
+const RAMPS = [[14, 4.5], [445, -4.5], [620, 4.5]].map(([i, lat]) => ({ i, lat, len: 7, hw: 3.6, h: 1.8 }));
+const FLIP = .5, TRICK_TIME = .55, TRICK_SPEED = 1.15;
 const PADS = [[62, 0], [300, 4], [560, -4], [842, 3]].map(([i, lat]) => ({ i, lat, len: 16 }));
 let world = null;
 function buildWorld() {
@@ -987,11 +1034,15 @@ function buildWorld() {
     const x = p.getX(i), z = p.getZ(i), near = nearestAny(x, z);
     let h = cy[near.i] + (naturalHeight(x, z) - cy[near.i]) * smooth(HW + 4, HW + 26, near.d);
     if (near.d < HW + 1.5) h -= .28;
+    // Flatten the ground under the shortcut lanes
+    const sc = scNear(x, z), flat = 1 - smooth(SC_HW + 1, SC_HW + 16, sc.d);
+    if (flat > 0 && near.d > HW + 1.5) h += (sc.y - .12 - h) * flat;
     GROUND[i] = h;
     p.setY(i, h);
     c.copy(grassA).lerp(grassB, .5 + .5 * Math.sin(x * .09 + Math.sin(z * .07) * 2) * Math.cos(z * .08));
     c.lerp(dirt, (1 - smooth(HW + .5, HW + 5, near.d)) * .75);
     c.lerp(sand, 1 - smooth(POND.r - 3, POND.r + 7, Math.hypot(x - POND.x, z - POND.z)));
+    c.lerp(dirt, (1 - smooth(SC_HW, SC_HW + 6, sc.d)) * .6);
     col.push(c.r, c.g, c.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -1057,7 +1108,7 @@ function buildWorld() {
   for (const s of [-1, 1]) {
     let prev = null;
     for (let i = 0; i <= N; i += 3) {
-      const j = i % N, x = cx[j] + nxOf(j) * s * (WALL + .6), z = cz[j] + nzOf(j) * s * (WALL + .6), ok = nearestAny(x, z).d > WALL - 1.5;
+      const j = i % N, x = cx[j] + nxOf(j) * s * (WALL + .6), z = cz[j] + nzOf(j) * s * (WALL + .6), ok = nearestAny(x, z).d > WALL - 1.5 && scNear(x, z).d > SC_HW + 4;
       if (ok) {
         const y = groundAt(x, z) - .2, b = wallPos.length / 3;
         wallPos.push(x, y, z, x, y + 1.5, z);
@@ -1138,7 +1189,7 @@ function buildWorld() {
   const spots = [];
   for (let tries = 0; tries < 9000 && spots.length < 620; tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
-    if (near.d < WALL + 3 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 8 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
+    if (near.d < WALL + 3 || scNear(x, z).d < SC_HW + 7 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 8 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
     spots.push([x, z, groundAt(x, z)]);
   }
   const m4 = new THREE.Object3D(), tint = new THREE.Color();
@@ -1205,7 +1256,84 @@ function buildWorld() {
   w.add(points);
   const parts = Array.from({ length: MAX }, () => ({ life: 0, max: 1, vx: 0, vy: 0, vz: 0, r: 0, g: 0, b: 0, grav: 0 }));
 
+  buildShortcuts(w);
+  buildRamps(w);
   world = { scene: w, sun, padTex, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
+}
+
+function buildShortcuts(w) {
+  const dirtTex = canvasTex(128, 128, (x, W, H) => {
+    x.fillStyle = '#9a7748'; x.fillRect(0, 0, W, H);
+    for (let i = 0; i < 2600; i++) { const v = 120 + Math.random() * 60 | 0; x.fillStyle = `rgb(${v},${v * .78 | 0},${v * .5 | 0})`; x.fillRect(Math.random() * W, Math.random() * H, 2, 2); }
+    x.fillStyle = 'rgba(70,50,28,.35)'; x.fillRect(W * .22, 0, 10, H); x.fillRect(W * .7, 0, 10, H);   // wheel ruts
+  });
+  const dirt = new THREE.MeshLambertMaterial({ map: dirtTex });
+  const fenceTex = canvasTex(64, 32, (x, W, H) => {
+    x.fillStyle = '#7a5532'; x.fillRect(0, 0, W, H);
+    x.fillStyle = '#5c3e22'; x.fillRect(0, 4, W, 3); x.fillRect(0, 18, W, 3); x.fillRect(0, 0, 5, H);
+  });
+  const fence = new THREE.MeshLambertMaterial({ map: fenceTex, side: THREE.DoubleSide });
+  const signMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, map: canvasTex(256, 96, (x, W, H) => {
+    x.fillStyle = '#1d6b2e'; x.fillRect(0, 0, W, H); x.strokeStyle = '#fff'; x.lineWidth = 6; x.strokeRect(5, 5, W - 10, H - 10);
+    x.fillStyle = '#fff'; x.font = 'italic 900 44px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('SHORTCUT', W / 2, H / 2 + 2);
+  }) });
+  signMat.map.wrapS = signMat.map.wrapT = THREE.ClampToEdgeWrapping;
+  for (const sc of SHORTCUTS) {
+    const strip = (latA, latB, yA, yB, from, to, mat, vScale) => {
+      const pos = [], uv = [], idx = [];
+      for (let i = from; i <= to; i++) {
+        const q = sc.pts[i], nx = q.tz, nz = -q.tx;
+        pos.push(q.x + nx * latA, q.y + yA, q.z + nz * latA, q.x + nx * latB, q.y + yB, q.z + nz * latB);
+        uv.push(0, i * vScale, 1, i * vScale);
+      }
+      for (let k = 0; k < to - from; k++) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx); g.computeVertexNormals();
+      const m = new THREE.Mesh(g, mat); m.receiveShadow = true; w.add(m);
+    };
+    strip(SC_HW, -SC_HW, .04, .04, 0, sc.M, dirt, 1 / 9);
+    for (const s of [-1, 1]) strip(s * (SC_HW + 1), s * (SC_HW + 1), -.2, 1, 7, sc.M - 7, fence, 1 / 2);
+    // Sign by the turn-off, facing the drivers coming towards it
+    const i = wrapI(sc.a - 22), side = sc.sa, x = cx[i] + nxOf(i) * side * (HW + 4), z = cz[i] + nzOf(i) * side * (HW + 4), y = groundAt(x, z);
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.9), signMat);
+    board.position.set(x, y + 2.4, z); board.rotation.y = Math.atan2(-tx[i], -tz[i]);
+    w.add(board);
+    for (const o of [-1.8, 1.8]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(.12, .12, 2.4, 6), fence); post.position.set(x + tz[i] * o, y + .9, z - tx[i] * o); w.add(post); }
+  }
+}
+
+function buildRamps(w) {
+  const tex = canvasTex(128, 128, (x, W, H) => {
+    x.fillStyle = '#1f7ae0'; x.fillRect(0, 0, W, H);
+    x.strokeStyle = '#fff'; x.lineWidth = 12;
+    for (const off of [20, 70]) { x.beginPath(); x.moveTo(14, off + 34); x.lineTo(W / 2, off); x.lineTo(W - 14, off + 34); x.stroke(); }
+    x.fillStyle = '#ffcf33'; x.fillRect(0, 0, 9, H); x.fillRect(W - 9, 0, 9, H);
+  });
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  const top = new THREE.MeshStandardMaterial({ map: tex, roughness: .6, metalness: .1, side: THREE.DoubleSide }), side = new THREE.MeshLambertMaterial({ color: 0x18457f, side: THREE.DoubleSide });
+  for (const r of RAMPS) {
+    const P = (d, lat, up) => { const i = wrapI(r.i + d); return [cx[i] + nxOf(i) * lat, cy[i] + (up ? r.h * d / r.len + .03 : -.05), cz[i] + nzOf(i) * lat]; };
+    const topPos = [], topUv = [], sidePos = [];
+    const quad = (out, a, b, c, d) => out.push(...a, ...b, ...c, ...a, ...c, ...d);
+    for (let d = 0; d < r.len; d++) {
+      const l0 = P(d, r.lat + r.hw, true), r0 = P(d, r.lat - r.hw, true), l1 = P(d + 1, r.lat + r.hw, true), r1 = P(d + 1, r.lat - r.hw, true);
+      quad(topPos, l0, r0, r1, l1);
+      topUv.push(0, d / r.len, 1, d / r.len, 1, (d + 1) / r.len, 0, d / r.len, 1, (d + 1) / r.len, 0, (d + 1) / r.len);
+      for (const lat of [r.lat + r.hw, r.lat - r.hw]) quad(sidePos, P(d, lat, false), P(d + 1, lat, false), P(d + 1, lat, true), P(d, lat, true));
+    }
+    quad(sidePos, P(r.len, r.lat + r.hw, false), P(r.len, r.lat - r.hw, false), P(r.len, r.lat - r.hw, true), P(r.len, r.lat + r.hw, true));
+    for (const [pos, mat, uv] of [[topPos, top, topUv], [sidePos, side, null]]) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      if (uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, mat);
+      m.castShadow = m.receiveShadow = true;
+      w.add(m);
+    }
+  }
 }
 
 // ---------- Lucky blocks and items ----------
@@ -1276,12 +1404,20 @@ function rollItem(k) {
   return 'turbo';
 }
 
+// Two slots: the first is what you use next, the second waits behind it and moves up when the first is spent
 function giveItem(k) {
-  if (k.item || k.roll > 0) return;
-  k.item = rollItem(k);
-  k.uses = ITEMS[k.item].uses;
-  k.roll = ROLL;
-  k.itemWait = 1 + Math.random() * 3;
+  if (!k.item) {
+    k.item = rollItem(k); k.uses = ITEMS[k.item].uses; k.roll = ROLL;
+    k.itemWait = 1 + Math.random() * 3;
+  } else if (!k.item2) {
+    k.item2 = rollItem(k); k.uses2 = ITEMS[k.item2].uses; k.roll2 = ROLL;
+  }
+}
+function shiftItems(k) {
+  if (k.item || !k.item2 || k.roll2 > 0) return;
+  k.item = k.item2; k.uses = k.uses2; k.roll = 0;
+  k.item2 = null; k.uses2 = 0;
+  k.itemWait = .8 + Math.random() * 2;
 }
 
 function useItem(k) {
@@ -1463,7 +1599,8 @@ function makeRacer(name, opts, isPlayer) {
   view.group.add(bubble);
   return {
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
-    item: null, uses: 0, roll: 0, itemWait: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0,
+    item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
+    sc: null, scI: 0, onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [],
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
@@ -1476,6 +1613,7 @@ function placeOnTrack(k, i, lat) {
   const j = wrapI(i), yaw = Math.atan2(tx[j], tz[j]);
   k.x = cx[j] + nxOf(j) * lat; k.z = cz[j] + nzOf(j) * lat; k.y = cy[j];
   k.yaw = k.moveYaw = yaw; k.idx = j; k.lat = lat; k.v = 0; k.drift = k.driftT = k.driftIn = 0; k.stuck = 0;
+  k.sc = null; k.onRamp = null; k.air = false; k.tricked = false; k.hopY = 0; k.hopV = 0; k.flipKind = 0; k.flipAngle = 0; k.flipT = FLIP;
 }
 
 function makeCPU(name, opts, i, level) {
@@ -1483,6 +1621,7 @@ function makeCPU(name, opts, i, level) {
   k.topMul = lo + (hi - lo) * (i + 1) / CPU_NAMES.length;
   k.lane = (i % 3 - 1) * 4;
   k.driftSkill = { Easy: .35, Normal: .65, Hard: .9 }[level] ?? .65;
+  k.scSkill = { Easy: .15, Normal: .4, Hard: .7 }[level] ?? .4;
   return k;
 }
 
@@ -1522,7 +1661,7 @@ function startRace(plan) {
     laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, fx: [], shake: 0, place: 0, itemShown: null,
   };
   for (const b of world.blocks) { b.down = 0; b.grow = 1; }
-  $('item').hidden = !race.items;
+  $('item').hidden = $('item2').hidden = !race.items;
   $('itemBtn').hidden = !race.items;
   itemReq = false;
   race.camX = you.x - Math.sin(you.yaw) * 9; race.camZ = you.z - Math.cos(you.yaw) * 9; race.camY = you.y + 4;
@@ -1569,7 +1708,7 @@ function thinkCPU(k, h) {
   let lane = k.lane;
   for (const p of PADS) { const ahead = wrapI(p.i - k.idx) * DS; if (ahead < 70) { lane = p.lat; break; } }
   // With an empty item slot, aim for the nearest ? block in the next row
-  if (race.items && !k.item && k.roll <= 0) for (const row of BLOCK_ROWS) {
+  if (race.items && !k.item2) for (const row of BLOCK_ROWS) {
     const ahead = wrapI(row - k.idx) * DS;
     if (ahead > 4 && ahead < 60) { lane = BLOCK_LATS.reduce((a, b) => Math.abs(b - k.lat) < Math.abs(a - k.lat) ? b : a); break; }
   }
@@ -1585,13 +1724,27 @@ function thinkCPU(k, h) {
     const ahead = ((o.total - k.total) * DS);
     if (ahead > 0 && ahead < 11 && Math.abs(o.lat - lane) < 2.6) lane = o.lat + (o.lat > 0 ? -3.6 : 3.6);
   }
+  // Line up with a ramp now and then
+  for (const r of RAMPS) { const ahead = wrapI(r.i - k.idx) * DS; if (ahead > 0 && ahead < 60 && (k.slot * 7 + r.i + k.lap) % 10 < 6) { lane = r.lat; break; } }
   const look = Math.round((13 + Math.abs(k.v) * .5) / DS), j = wrapI(k.idx + look);
   const lat = clamp(lane * .75 + clamp(kap[j] * 240, -5, 5), -HW + 1.8, HW - 1.8);
-  const gx = cx[j] + nxOf(j) * lat, gz = cz[j] + nzOf(j) * lat;
+  let gx = cx[j] + nxOf(j) * lat, gz = cz[j] + nzOf(j) * lat, vm = vmax[k.idx];
+  // Shortcuts: decide once per lap whether to take each one, then follow the lane
+  if (k.sc) {
+    const q = k.sc.pts[Math.min(k.sc.M, k.scI + Math.round(10 + Math.abs(k.v) * .45))];
+    gx = q.x; gz = q.z; vm = 40;
+  } else for (const sc of SHORTCUTS) {
+    const ahead = wrapI(sc.a - k.idx) * DS;
+    if (ahead > 50 && ahead < N * DS - 10) continue;
+    const key = sc.id + ':' + k.lap;
+    if (k.scKey !== key) { k.scKey = key; k.scGo = Math.random() < (k.scSkill ?? 0); }
+    if (k.scGo) { const q = sc.pts[ahead > 18 && ahead < 60 ? 4 : 12]; gx = q.x; gz = q.z; vm = Math.min(vm, 30); }
+    break;
+  }
   k.wantSteer = clamp(wrapA(Math.atan2(gx - k.x, gz - k.z) - k.yaw) * 2.6, -1, 1);
   // Rubber banding keeps the pack close: a little quicker behind you, a little slower ahead of you
   k.rubber = you.ai ? 1 : 1 + clamp((you.total - k.total) * DS / 320, -.07, .09);
-  const want = Math.min(vmax[k.idx], 60) * Math.min(1.05, k.topMul * k.rubber + .06) * (k.padT > 0 ? PAD_SPEED : 1);
+  const want = Math.min(vm, 60) * Math.min(1.05, k.topMul * k.rubber + .06) * (k.padT > 0 ? PAD_SPEED : 1) * (k.trickB > 0 ? TRICK_SPEED : 1);
   k.throttle = k.v < want ? 1 : 0;
   k.brake = k.v > want + 2.5 ? 1 : 0;
 
@@ -1611,6 +1764,12 @@ function thinkCPU(k, h) {
     k.wantDrift = !(straight || wrongWay || charged || k.driftT > 3 || Math.abs(k.lat) > HW - 1.2 && k.driftT > .3);
     if (!k.wantDrift) k.driftCool = .8;
   }
+  if (k.sc) k.wantDrift = false;
+  // In the air, most CPUs throw a trick on the way up
+  if (k.air) {
+    if (k.trickPlan === null || k.trickPlan === undefined) k.trickPlan = Math.random() < (k.driftSkill ?? .5) + .15;
+    k.wantDrift = k.trickPlan && k.hopV < 5;
+  } else k.trickPlan = null;
 
   // Items: turbos on a straight, oil when someone is right behind, rockets when someone is in range ahead
   k.wantItem = false;
@@ -1625,12 +1784,41 @@ function thinkCPU(k, h) {
   }
 }
 
-function stepKart(k, h) {
-  const loc = locate(k.x, k.z, k.idx, 60);
-  let delta = loc.i - k.idx;
+function moveIdx(k, i) {
+  let delta = i - k.idx;
   if (delta > N / 2) delta -= N; else if (delta < -N / 2) delta += N;
-  k.total += delta; k.idx = loc.i; k.lat = loc.lat;
-  const dist = loc.d, onRoad = k.onRoad = Math.abs(loc.lat) <= HW + 1.5;
+  k.total += delta; k.idx = i;
+}
+
+// Turning onto a shortcut: you have to be near its start, off the road on that side, and on the lane itself
+function joinShortcut(k) {
+  for (const sc of SHORTCUTS) {
+    if (wrapI(k.idx - sc.a + 25) > 70) continue;
+    const n = scLocate(sc, k.x, k.z, 0, Math.round(sc.M * .4));
+    if (n.i >= 3 && n.d < SC_HW) { k.sc = sc; k.scI = n.i; return; }
+  }
+}
+
+function stepKart(k, h) {
+  let dist = 0, onRoad;
+  if (!k.sc && !k.air) joinShortcut(k);
+  if (k.sc) {
+    const sc = k.sc, n = scLocate(sc, k.x, k.z, k.scI - 20, k.scI + 20);
+    k.scI = n.i; k.scLat = n.lat;
+    moveIdx(k, wrapI(sc.a + Math.round(n.i / sc.M * sc.span)));
+    k.lat = sc.sa * WALL;   // far off the road, so pads and ramps on the track below don't count
+    onRoad = k.onRoad = true;
+    // Back onto the road at either end
+    if (n.i >= sc.M - 2 || n.i <= 0) {
+      k.sc = null;
+      moveIdx(k, n.i <= 0 ? sc.a : sc.b);
+    }
+  }
+  if (!k.sc) {
+    const loc = locate(k.x, k.z, k.idx, 60);
+    moveIdx(k, loc.i); k.lat = loc.lat; dist = loc.d;
+    onRoad = k.onRoad = Math.abs(loc.lat) <= HW + 1.5;
+  }
 
   // Spun out: no control until the kart comes round
   if (k.spinT > 0) {
@@ -1640,14 +1828,16 @@ function stepKart(k, h) {
   }
   k.starT = Math.max(0, k.starT - h); k.shieldT = Math.max(0, k.shieldT - h); k.zapT = Math.max(0, k.zapT - h);
   if (k.roll > 0 && (k.roll -= h) <= 0 && k.isPlayer) sound.sfx('got');
+  if (k.roll2 > 0 && (k.roll2 -= h) <= 0 && k.isPlayer) sound.sfx('got');
+  shiftItems(k);
   if (k.wantItem && race.items) useItem(k);
   k.wantItem = false;
 
   // Drifting costs a little top speed (up to 8% once fully sideways). Speed pads lift your top speed to 115% for a
   // few seconds rather than kicking you forward, and once they wear off you ease back down to normal.
-  const top = k.top * (k.ai ? k.topMul * k.rubber : 1) * (onRoad || k.starT > 0 ? 1 : k.grass) * (k.boostT > 0 ? 1.3 : 1) * (k.starT > 0 ? 1.15 : 1) * (k.zapT > 0 ? .72 : 1)
+  const top = k.top * (k.ai ? k.topMul * k.rubber : 1) * (onRoad || k.starT > 0 || k.hopY > .5 ? 1 : k.grass) * (k.boostT > 0 ? 1.3 : k.trickB > 0 ? TRICK_SPEED : 1) * (k.starT > 0 ? 1.15 : 1) * (k.zapT > 0 ? .72 : 1)
     * (k.padT > 0 ? PAD_SPEED : 1) * (k.drift ? 1 - .08 * smooth(0, 1, k.driftIn) : 1);
-  const accel = k.accel * (k.boostT > 0 || k.starT > 0 ? 3 : k.padT > 0 ? 1.8 : 1);
+  const accel = k.accel * (k.boostT > 0 || k.starT > 0 ? 3 : k.trickB > 0 ? 2 : k.padT > 0 ? 1.8 : 1);
   if (k.throttle) k.v += k.v < top ? accel * (1.08 - Math.max(0, k.v) / top) * h : -(onRoad ? 7 : 12) * h;
   else if (!k.brake) k.v -= Math.sign(k.v) * Math.min(Math.abs(k.v), 7 * h);
   if (k.brake) k.v = k.v > 0 ? k.v - 38 * h : Math.max(k.v - 13 * h, -11);
@@ -1673,9 +1863,12 @@ function stepKart(k, h) {
   k.x += Math.sin(k.moveYaw) * k.v * h;
   k.z += Math.cos(k.moveYaw) * k.v * h;
 
-  // The tyre wall holds you in and scrubs speed
-  if (dist > WALL) {
-    const i = loc.i, push = (dist - WALL) / dist;
+  // The tyre wall holds you in and scrubs speed. On a shortcut, the fences do.
+  if (k.sc) {
+    const q = k.sc.pts[k.scI], over = Math.abs(k.scLat) - (SC_HW + .6);
+    if (over > 0) { const s = Math.sign(k.scLat); k.x -= q.tz * s * over; k.z += q.tx * s * over; k.v *= 1 - 2.2 * h; }
+  } else if (dist > WALL) {
+    const i = k.idx, push = (dist - WALL) / dist;
     k.x -= (k.x - cx[i]) * push; k.z -= (k.z - cz[i]) * push;
     k.v *= 1 - 2.2 * h;
   }
@@ -1683,12 +1876,48 @@ function stepKart(k, h) {
   for (const p of PADS) if (wrapI(k.idx - p.i) < p.len && Math.abs(k.lat - p.lat) < 3.6) k.padT = PAD_TIME;
   k.boostT = Math.max(0, k.boostT - h);
   k.padT = Math.max(0, k.padT - h);
+  k.trickB = Math.max(0, k.trickB - h);
 
-  if (k.hopY > 0) { k.hopV -= 34 * h; k.hopY = Math.max(0, k.hopY + k.hopV * h); }
-  const gy = surfaceY(k.x, k.z, k.idx, k.lat);
+  // Ramps: ride up the wedge, then fly off the top
+  let ramp = null, along = 0;
+  if (!k.sc) for (const r of RAMPS) {
+    const d = wrapI(k.idx - r.i);
+    if (d >= r.len + 1 || Math.abs(k.lat - r.lat) > r.hw) continue;
+    along = d + ((k.x - cx[k.idx]) * tx[k.idx] + (k.z - cz[k.idx]) * tz[k.idx]) / DS;
+    if (along >= 0 && along <= r.len) ramp = r;
+  }
+  if (ramp && k.v > 0) {
+    const hgt = ramp.h * along / ramp.len;
+    if (k.hopY <= hgt + .15) { k.hopY = Math.max(.001, hgt); k.hopV = 0; k.onRamp = ramp; }
+  } else if (k.onRamp) {
+    const r = k.onRamp;
+    k.onRamp = null;
+    if (k.v > 6 && k.hopY > .4) { k.air = true; k.tricked = false; k.hopV = k.v * r.h / (r.len * DS) + 3.5; }
+  }
+  // Tricks: press drift while flying
+  if (k.air && k.wantDrift && !k.lastWantDrift && !k.tricked && k.spinT <= 0) {
+    k.tricked = true; k.flipT = 0; k.flipKind = Math.random() < .5 ? 1 : 2; k.flipDir = Math.random() < .5 ? -1 : 1;
+    if (k.isPlayer) { sound.sfx('trick'); buzz(20); }
+  }
+  k.lastWantDrift = k.wantDrift;
+  if (k.flipT < FLIP) {
+    k.flipT = Math.min(FLIP, k.flipT + h);
+    k.flipAngle = smooth(0, 1, k.flipT / FLIP) * Math.PI * 2 * k.flipDir;
+    if (k.flipT >= FLIP) { k.flipKind = 0; k.flipAngle = 0; }
+  }
+  if (k.hopY > 0 && !k.onRamp) {
+    k.hopV -= (k.air ? 26 : 34) * h;
+    k.hopY = Math.max(0, k.hopY + k.hopV * h);
+    if (k.hopY === 0 && k.air) land(k);
+  }
+  const gy = k.sc ? k.sc.pts[k.scI].y : surfaceY(k.x, k.z, k.idx, k.lat);
   k.y += (gy - k.y) * Math.min(1, h * 16);
-  const fi = wrapI(k.idx + Math.round(1.3 / DS)), bi = wrapI(k.idx - Math.round(1.3 / DS));
-  k.pitch += (-Math.atan2(cy[fi] - cy[bi], 2.6) - k.pitch) * Math.min(1, h * 10);
+  let slope;
+  if (k.sc) { const p = k.sc.pts, i = k.scI; slope = -Math.atan2(p[Math.min(k.sc.M, i + 1)].y - p[Math.max(0, i - 1)].y, 2); }
+  else { const fi = wrapI(k.idx + Math.round(1.3 / DS)), bi = wrapI(k.idx - Math.round(1.3 / DS)); slope = -Math.atan2(cy[fi] - cy[bi], 2.6); }
+  if (k.onRamp) slope -= Math.atan2(k.onRamp.h, k.onRamp.len * DS);
+  else if (k.air) slope += clamp(-k.hopV * .025, -.3, .3);
+  k.pitch += (slope - k.pitch) * Math.min(1, h * 10);
 
   k.stuck = race.t > 0 && Math.abs(k.v) < 2.5 ? k.stuck + h : 0;
   if (k.ai && k.stuck > 2.5) placeOnTrack(k, k.idx, clamp(k.lat, -6, 6));
@@ -1705,6 +1934,13 @@ function stepKart(k, h) {
     if (k.isPlayer) finishPlayer();
   }
   k.lap = clamp(lapNow, 1, race.laps);
+}
+
+function land(k) {
+  k.air = false;
+  if (k.tricked) k.trickB = TRICK_TIME;
+  else if (k.isPlayer) { race.shake = Math.max(race.shake, .2); sound.sfx('land'); }
+  k.tricked = false;
 }
 
 function bumpKarts(h) {
@@ -1832,6 +2068,11 @@ function drawMapBase() {
   x.lineJoin = 'round';
   x.strokeStyle = 'rgba(0,0,0,.55)'; x.lineWidth = 9; path(); x.stroke();
   x.strokeStyle = '#fff'; x.lineWidth = 5; path(); x.stroke();
+  for (const sc of SHORTCUTS) {
+    x.beginPath(); for (const q of sc.pts) x.lineTo(mapX(q.x), mapY(q.z));
+    x.strokeStyle = 'rgba(0,0,0,.45)'; x.lineWidth = 5; x.stroke();
+    x.strokeStyle = '#d9a35c'; x.lineWidth = 2.5; x.stroke();
+  }
   x.strokeStyle = '#14161d'; x.lineWidth = 3; x.beginPath(); x.moveTo(mapX(cx[0]), mapY(cz[0]) - 5); x.lineTo(mapX(cx[0]), mapY(cz[0]) + 5); x.stroke();
 }
 function drawHud() {
@@ -1846,7 +2087,7 @@ function drawHud() {
   // Start lights: one red per second, then all green
   const lights = $('lights');
   lights.hidden = r.t >= 1 || r.over;
-  $('item').hidden = !r.items || !lights.hidden;
+  $('item').hidden = $('item2').hidden = !r.items || !lights.hidden;
   if (!lights.hidden) {
     const reds = r.waiting || r.t < -3 ? 0 : 3 - Math.ceil(-r.t) + 1;
     lights.classList.toggle('go', r.t >= 0);
@@ -1865,7 +2106,18 @@ function drawHud() {
       $('itemName').textContent = you.item && you.roll <= 0 ? ITEMS[you.item].name : '';
     }
   }
-  const lines = you.starT > 0 ? 'star' : you.boostT > 0 || you.padT > 0 ? 'on' : '';
+  if (r.items) {
+    const icon2 = you.roll2 > 0 ? ITEMS[ITEM_KEYS[(Math.floor(r.t * 13) + 3) % ITEM_KEYS.length]].icon : you.item2 ? ITEMS[you.item2].icon : '';
+    const key2 = icon2 + (you.roll2 > 0 ? 'r' : '') + you.uses2;
+    if (key2 !== r.item2Shown) {
+      if (you.roll2 > 0 && you.roll <= 0 && icon2 !== $('item2Icon').textContent) sound.sfx('tick');
+      r.item2Shown = key2;
+      $('item2Icon').textContent = icon2;
+      $('item2').className = you.roll2 > 0 ? 'roll' : you.item2 ? 'has' : '';
+      $('item2Count').textContent = you.item2 && you.roll2 <= 0 && you.uses2 > 1 ? '×' + you.uses2 : '';
+    }
+  }
+  const lines = you.starT > 0 ? 'star' : you.boostT > 0 || you.padT > 0 || you.trickB > 0 ? 'on' : '';
   if ($('lines').className !== lines) $('lines').className = lines;
   $('clock').textContent = fmtTime(you.finish ?? r.t);
   $('speed').textContent = Math.round(Math.abs(you.v) * 3.2);
@@ -1904,7 +2156,7 @@ function renderKart(k, dt) {
   // A spin-out turns the kart round twice, easing off so it ends facing the way it started
   const sp = k.spinT > 0 ? 1 - k.spinT / SPIN : 1, spinYaw = (1 - (1 - sp) ** 2) * Math.PI * 4;
   g.position.set(k.x, k.y + k.hopY + (k.spinT > 0 ? Math.sin(sp * Math.PI) * .5 : 0), k.z);
-  g.rotation.set(k.pitch, k.yaw + k.slip + spinYaw, 0);
+  g.rotation.set(k.pitch, k.yaw + k.slip + spinYaw + (k.flipKind === 2 ? k.flipAngle : 0), k.flipKind === 1 ? k.flipAngle : 0);
   k.view.update(dt, k.v, k.drift ? clamp(k.drift * .2 + k.steer * .8, -1, 1) : k.steer);
   const b = k.bubble;
   b.visible = k.shieldT > 0 || k.starT > 0;
@@ -1926,7 +2178,7 @@ function renderKart(k, dt) {
     const [cr, cg, cb] = hot ? [1, .55, .12] : blue ? [.25, .7, 1] : [.75, .75, .8];
     spark(rx + cos * s * .75, k.y + .15, rz - sin * s * .75, -sin * 3 + (Math.random() - .5) * 5, 2 + Math.random() * 3, -cos * 3 + (Math.random() - .5) * 5, .35, cr, cg, cb, 12);
   }
-  if (k.boostT > 0) for (let i = 0; i < 2; i++) spark(k.x - sin * 1.6, k.y + .6, k.z - cos * 1.6, -sin * 9 + (Math.random() - .5) * 2, Math.random() * 1.5, -cos * 9 + (Math.random() - .5) * 2, .28, 1, .5, .1);
+  if (k.boostT > 0 || k.trickB > 0) for (let i = 0; i < (k.boostT > 0 ? 2 : 1); i++) spark(k.x - sin * 1.6, k.y + .6, k.z - cos * 1.6, -sin * 9 + (Math.random() - .5) * 2, Math.random() * 1.5, -cos * 9 + (Math.random() - .5) * 2, .28, 1, .5, .1);
   if (!k.onRoad && Math.abs(k.v) > 6 && Math.random() < .5) spark(rx, k.y + .2, rz, (Math.random() - .5) * 2, 1 + Math.random() * 1.5, (Math.random() - .5) * 2, .6, .32, .26, .15);
 }
 
@@ -1968,7 +2220,7 @@ function raceFrame(dt) {
       if (r.t >= 0 && r.lastBeep !== 0) { r.lastBeep = 0; sound.beep(1040, .4); if (state.music) sound.startMusic(); }
     }
     // A whoosh whenever your boost kicks in
-    const boosting = r.you.boostT > 0 || r.you.padT > 0;
+    const boosting = r.you.boostT > 0 || r.you.padT > 0 || r.you.trickB > 0;
     if (boosting && !r.wasBoost) { sound.sfx('whoosh'); buzz(30); }
     r.wasBoost = boosting;
     sound.engine(r.you);
@@ -2020,6 +2272,8 @@ const sound = (() => {
     bonk: v => { tone(420, .4, { vol: .07 * v, slide: 90 }); hiss(.25, { vol: .12 * v, f0: 900, f1: 200 }); },
     boom: v => { hiss(.6, { vol: .3 * v, f0: 1500, f1: 80, type: 'lowpass' }); tone(140, .4, { type: 'sine', vol: .12 * v, slide: 40 }); },
     lap: v => notes([784, 1047], .1, { vol: .05 * v, type: 'triangle' }),
+    trick: v => { hiss(.3, { vol: .1 * v, f0: 600, f1: 2600 }); notes([660, 990], .08, { vol: .04 * v, type: 'triangle' }); },
+    land: v => { hiss(.18, { vol: .14 * v, f0: 400, f1: 120, type: 'lowpass' }); tone(110, .15, { type: 'sine', vol: .08 * v, slide: 60 }); },
     final: v => notes([523, 659, 784, 1047, 1319], .09, { vol: .05 * v, type: 'triangle' }),
     finish: v => notes([523, 659, 784, 659, 784, 1047], .12, { vol: .05 * v, type: 'triangle' }),
     win: v => { notes([523, 659, 784, 1047, 784, 1047, 1319, 1568], .11, { vol: .055 * v, type: 'square' }); notes([262, 330, 392, 523], .22, { vol: .04 * v, type: 'triangle' }); },
@@ -2478,9 +2732,9 @@ function netFinished(k) {
   else netToHost({ t: 'fin' });
 }
 
-const SNAP_LEN = 16;
+const SNAP_LEN = 18;
 function netSnapshot(k) {
-  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2)];
+  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind];
 }
 function netStore(k, snap) {
   if (!k?.remote || !Array.isArray(snap) || snap.length !== SNAP_LEN || !snap.every(Number.isFinite)) return;
@@ -2511,6 +2765,7 @@ function netInterpolate() {
     k.v = mix(5); k.steer = mix(6); k.drift = b[7]; k.driftT = b[8]; k.driftIn = k.drift ? Math.min(1, k.driftIn + .04) : 0;
     k.boostT = b[9]; k.hopY = Math.max(0, mix(10)); k.pitch = mix(11); k.total = b[12];
     k.spinT = clamp(b[13], 0, SPIN); k.starT = clamp(b[14], 0, 10); k.shieldT = clamp(b[15], 0, 15);
+    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2);
     // A short gap in the connection: keep rolling rather than stop dead
     const late = clamp(when - list[list.length - 1].at, 0, COAST_MS) / 1000;
     if (i === list.length - 1 && late > 0) { k.x += Math.sin(k.yaw) * k.v * late; k.z += Math.cos(k.yaw) * k.v * late; }
