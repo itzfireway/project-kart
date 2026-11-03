@@ -1042,7 +1042,6 @@ function buildWorld() {
     c.copy(grassA).lerp(grassB, .5 + .5 * Math.sin(x * .09 + Math.sin(z * .07) * 2) * Math.cos(z * .08));
     c.lerp(dirt, (1 - smooth(HW + .5, HW + 5, near.d)) * .75);
     c.lerp(sand, 1 - smooth(POND.r - 3, POND.r + 7, Math.hypot(x - POND.x, z - POND.z)));
-    c.lerp(dirt, (1 - smooth(SC_HW, SC_HW + 4, sc.d)) * .25);
     col.push(c.r, c.g, c.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -1262,41 +1261,16 @@ function buildWorld() {
 }
 
 function buildShortcuts(w) {
-  // Worn, grassy dirt rather than a bright lane, so the shortcuts are easy to miss
-  const dirtTex = canvasTex(128, 128, (x, W, H) => {
-    x.fillStyle = '#6f7a3c'; x.fillRect(0, 0, W, H);
-    for (let i = 0; i < 2600; i++) { const v = 105 + Math.random() * 50 | 0; x.fillStyle = `rgb(${v},${v * .82 | 0},${v * .5 | 0})`; x.fillRect(W * (.12 + Math.random() * .76), Math.random() * H, 2, 2); }
-    for (let i = 0; i < 1400; i++) { x.fillStyle = `rgba(${60 + Math.random() * 30 | 0},${120 + Math.random() * 40 | 0},40,.8)`; x.fillRect(Math.random() * W, Math.random() * H, 2, 3); }
-    x.fillStyle = 'rgba(80,58,32,.45)'; x.fillRect(W * .25, 0, 9, H); x.fillRect(W * .68, 0, 9, H);   // wheel ruts
-  });
-  const dirt = new THREE.MeshLambertMaterial({ map: dirtTex });
-  const fenceTex = canvasTex(64, 32, (x, W, H) => {
-    x.fillStyle = '#5f4528'; x.fillRect(0, 0, W, H);
-    x.fillStyle = '#46321c'; x.fillRect(0, 4, W, 3); x.fillRect(0, 18, W, 3); x.fillRect(0, 0, 5, H);
-  });
-  const fence = new THREE.MeshLambertMaterial({ map: fenceTex, side: THREE.DoubleSide });
   const rnd = (() => { let s = 777; return () => (s = s * 16807 % 2147483647) / 2147483647; })();
   const bushes = [];
   for (const sc of SHORTCUTS) {
-    const strip = (latA, latB, yA, yB, from, to, mat, vScale) => {
-      const pos = [], uv = [], idx = [];
-      for (let i = from; i <= to; i++) {
-        const q = sc.pts[i], nx = q.tz, nz = -q.tx;
-        pos.push(q.x + nx * latA, q.y + yA, q.z + nz * latA, q.x + nx * latB, q.y + yB, q.z + nz * latB);
-        uv.push(0, i * vScale, 1, i * vScale);
-      }
-      for (let k = 0; k < to - from; k++) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-      g.setIndex(idx); g.computeVertexNormals();
-      const m = new THREE.Mesh(g, mat); m.receiveShadow = true; w.add(m);
-    };
-    strip(SC_HW, -SC_HW, .04, .04, 0, sc.M, dirt, 1 / 9);
-    // Low fences only deep inside, where the road can't see them
-    for (const s of [-1, 1]) strip(s * (SC_HW + 1), s * (SC_HW + 1), -.2, .7, 22, sc.M - 22, fence, 1 / 2);
-    // Bushes line the lane and crowd round both mouths, so from the road it just looks like a gap in the hedge
-    for (let i = 2; i <= sc.M - 2; i += i < 24 || i > sc.M - 24 ? 1.6 : 4) {
+    // No path and no fences: the lane is plain grass between hedges, which hold you in without looking like a track.
+    // A few low bushes sit right across the way in, and you just drive through them.
+    for (const [i, lat] of [[5, -2.6], [6, 1.4], [8, 3.4], [9, -.6]]) {
+      const q = sc.pts[i];
+      bushes.push([q.x + q.tz * lat, q.z - q.tx * lat, .55 + rnd() * .2]);
+    }
+    for (let i = 2; i <= sc.M - 2; i += 1.8) {
       const q = sc.pts[Math.round(i)];
       for (const s of [-1, 1]) {
         const l = s * (SC_HW + 1.7 + rnd() * 1.2);
