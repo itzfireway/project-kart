@@ -979,41 +979,7 @@ function ribbon(from, to, latA, latB, lift, mat, tiles, parent, step = 1) {
 
 const PAD_SPEED = 1.15, PAD_TIME = 2.5;
 
-// ---------- Shortcuts and ramps ----------
-// A shortcut is a narrow dirt lane that leaves the road at sample a and rejoins it at sample b. While you are on it,
-// progress is measured along the lane and mapped back onto the main track, so laps and positions still work.
-const SC_HW = 4.6;
-const SHORTCUTS = [[160, 240], [730, 850]].map(([a, b], id) => {
-  const mx = (cx[a] + cx[b]) / 2, mz = (cz[a] + cz[b]) / 2;
-  const sideOf = i => Math.sign((mx - cx[i]) * nxOf(i) + (mz - cz[i]) * nzOf(i)) || 1;
-  const edge = (i, side) => v3(cx[i] + nxOf(i) * side * (HW - 1), 0, cz[i] + nzOf(i) * side * (HW - 1));
-  const sa = sideOf(a), sb = sideOf(b), A = edge(a, sa), B = edge(b, sb), dir = B.clone().sub(A).normalize();
-  // Leave and rejoin at a gentle angle: the lane starts off following the road, then heads across
-  const ta = v3(tx[a], 0, tz[a]), tb = v3(tx[b], 0, tz[b]);
-  const A1 = A.clone().addScaledVector(ta.clone().multiplyScalar(.55).addScaledVector(dir, .45).normalize(), 12);
-  const B1 = B.clone().addScaledVector(tb.clone().multiplyScalar(.55).addScaledVector(dir, .45).normalize(), -12);
-  const curve = new THREE.CatmullRomCurve3([A, A1, B1, B], false, 'centripetal');
-  const M = Math.round(curve.getLength()), raw = curve.getSpacedPoints(M);
-  const pts = raw.map((q, i) => ({ x: q.x, z: q.z, y: cy[a] + (cy[b] - cy[a]) * smooth(0, 1, i / M), tx: 0, tz: 0 }));
-  pts.forEach((q, i) => {
-    const n = pts[Math.min(M, i + 1)], o = pts[Math.max(0, i - 1)], l = Math.hypot(n.x - o.x, n.z - o.z) || 1;
-    q.tx = (n.x - o.x) / l; q.tz = (n.z - o.z) / l;
-  });
-  return { id, a, b, sa, sb, span: wrapI(b - a), pts, M };
-});
-// Nearest lane point to (x, z), searching i0..i1. lat is positive to the left of the lane.
-function scLocate(sc, x, z, i0, i1) {
-  let best = 1e12, bi = i0;
-  for (let i = Math.max(0, i0); i <= Math.min(sc.M, i1); i++) { const q = sc.pts[i], d = (x - q.x) ** 2 + (z - q.z) ** 2; if (d < best) { best = d; bi = i; } }
-  const q = sc.pts[bi];
-  return { i: bi, d: Math.sqrt(best), lat: (x - q.x) * q.tz - (z - q.z) * q.tx };
-}
-function scNear(x, z) {
-  let best = 1e12, y = 0;
-  for (const sc of SHORTCUTS) for (const q of sc.pts) { const d = (x - q.x) ** 2 + (z - q.z) ** 2; if (d < best) { best = d; y = q.y; } }
-  return { d: Math.sqrt(best), y };
-}
-
+// ---------- Ramps ----------
 // Ramps sit on one half of the road. Drive up one and you take off; press drift in the air for a trick, and you
 // get a small boost when you land.
 const RAMPS = [[14, 4.5], [445, -4.5], [620, 4.5]].map(([i, lat]) => ({ i, lat, len: 7, hw: 3.6, h: 1.8 }));
@@ -1034,9 +1000,6 @@ function buildWorld() {
     const x = p.getX(i), z = p.getZ(i), near = nearestAny(x, z);
     let h = cy[near.i] + (naturalHeight(x, z) - cy[near.i]) * smooth(HW + 4, HW + 26, near.d);
     if (near.d < HW + 1.5) h -= .28;
-    // Flatten the ground under the shortcut lanes
-    const sc = scNear(x, z), flat = 1 - smooth(SC_HW + 1, SC_HW + 16, sc.d);
-    if (flat > 0 && near.d > HW + 1.5) h += (sc.y - .12 - h) * flat;
     GROUND[i] = h;
     p.setY(i, h);
     c.copy(grassA).lerp(grassB, .5 + .5 * Math.sin(x * .09 + Math.sin(z * .07) * 2) * Math.cos(z * .08));
@@ -1107,7 +1070,7 @@ function buildWorld() {
   for (const s of [-1, 1]) {
     let prev = null;
     for (let i = 0; i <= N; i += 3) {
-      const j = i % N, x = cx[j] + nxOf(j) * s * (WALL + .6), z = cz[j] + nzOf(j) * s * (WALL + .6), ok = nearestAny(x, z).d > WALL - 1.5 && scNear(x, z).d > SC_HW + 4;
+      const j = i % N, x = cx[j] + nxOf(j) * s * (WALL + .6), z = cz[j] + nzOf(j) * s * (WALL + .6), ok = nearestAny(x, z).d > WALL - 1.5;
       if (ok) {
         const y = groundAt(x, z) - .2, b = wallPos.length / 3;
         wallPos.push(x, y, z, x, y + 1.5, z);
@@ -1188,7 +1151,7 @@ function buildWorld() {
   const spots = [];
   for (let tries = 0; tries < 9000 && spots.length < 620; tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
-    if (near.d < WALL + 3 || scNear(x, z).d < SC_HW + 3.5 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 8 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
+    if (near.d < WALL + 3 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 8 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
     spots.push([x, z, groundAt(x, z)]);
   }
   const m4 = new THREE.Object3D(), tint = new THREE.Color();
@@ -1555,7 +1518,7 @@ function makeRacer(name, opts, isPlayer) {
   return {
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
-    sc: null, scI: 0, onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0,
+    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [],
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
@@ -1568,7 +1531,7 @@ function placeOnTrack(k, i, lat) {
   const j = wrapI(i), yaw = Math.atan2(tx[j], tz[j]);
   k.x = cx[j] + nxOf(j) * lat; k.z = cz[j] + nzOf(j) * lat; k.y = cy[j];
   k.yaw = k.moveYaw = yaw; k.idx = j; k.lat = lat; k.v = 0; k.drift = k.driftT = k.driftIn = 0; k.stuck = 0;
-  k.sc = null; k.onRamp = null; k.air = false; k.tricked = false; k.hopY = 0; k.hopV = 0; k.flipKind = 0; k.flipAngle = 0; k.flipT = FLIP;
+  k.onRamp = null; k.air = false; k.tricked = false; k.hopY = 0; k.hopV = 0; k.flipKind = 0; k.flipAngle = 0; k.flipT = FLIP;
 }
 
 function makeCPU(name, opts, i, level) {
@@ -1576,7 +1539,6 @@ function makeCPU(name, opts, i, level) {
   k.topMul = lo + (hi - lo) * (i + 1) / CPU_NAMES.length;
   k.lane = (i % 3 - 1) * 4;
   k.driftSkill = { Easy: .35, Normal: .65, Hard: .9 }[level] ?? .65;
-  k.scSkill = 0;
   return k;
 }
 
@@ -1616,9 +1578,6 @@ function startRace(plan) {
     laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, fx: [], shake: 0, place: 0, itemShown: null,
   };
   for (const b of world.blocks) { b.down = 0; b.grow = 1; }
-  // Only a few CPUs know about the shortcuts (1 on Easy, 2 on Normal, 3 on Hard), and even they don't take them every lap
-  const level = plan ? plan.level : state.level, locals = karts.filter(k => k.ai && !k.remote).sort(() => Math.random() - .5);
-  locals.slice(0, { Easy: 1, Normal: 2, Hard: 3 }[level] ?? 2).forEach(k => { k.scSkill = { Easy: .5, Normal: .6, Hard: .75 }[level] ?? .6; });
   $('item').hidden = $('item2').hidden = !race.items;
   $('itemBtn').hidden = !race.items;
   itemReq = false;
@@ -1686,19 +1645,7 @@ function thinkCPU(k, h) {
   for (const r of RAMPS) { const ahead = wrapI(r.i - k.idx) * DS; if (ahead > 0 && ahead < 60 && (k.slot * 7 + r.i + k.lap) % 10 < 6) { lane = r.lat; break; } }
   const look = Math.round((13 + Math.abs(k.v) * .5) / DS), j = wrapI(k.idx + look);
   const lat = clamp(lane * .75 + clamp(kap[j] * 240, -5, 5), -HW + 1.8, HW - 1.8);
-  let gx = cx[j] + nxOf(j) * lat, gz = cz[j] + nzOf(j) * lat, vm = vmax[k.idx];
-  // Shortcuts: decide once per lap whether to take each one, then follow the lane
-  if (k.sc) {
-    const q = k.sc.pts[Math.min(k.sc.M, k.scI + Math.round(10 + Math.abs(k.v) * .45))];
-    gx = q.x; gz = q.z; vm = 40;
-  } else for (const sc of SHORTCUTS) {
-    const ahead = wrapI(sc.a - k.idx) * DS;
-    if (ahead > 50 && ahead < N * DS - 10) continue;
-    const key = sc.id + ':' + k.lap;
-    if (k.scKey !== key) { k.scKey = key; k.scGo = Math.random() < (k.scSkill ?? 0); }
-    if (k.scGo) { const q = sc.pts[ahead > 18 && ahead < 60 ? 4 : 12]; gx = q.x; gz = q.z; vm = Math.min(vm, 30); }
-    break;
-  }
+  const gx = cx[j] + nxOf(j) * lat, gz = cz[j] + nzOf(j) * lat, vm = vmax[k.idx];
   k.wantSteer = clamp(wrapA(Math.atan2(gx - k.x, gz - k.z) - k.yaw) * 2.6, -1, 1);
   // Rubber banding keeps the pack close: a little quicker behind you, a little slower ahead of you
   k.rubber = you.ai ? 1 : 1 + clamp((you.total - k.total) * DS / 320, -.07, .09);
@@ -1722,7 +1669,6 @@ function thinkCPU(k, h) {
     k.wantDrift = !(straight || wrongWay || charged || k.driftT > 3 || Math.abs(k.lat) > HW - 1.2 && k.driftT > .3);
     if (!k.wantDrift) k.driftCool = .8;
   }
-  if (k.sc) k.wantDrift = false;
   // In the air, most CPUs throw a trick on the way up
   if (k.air) {
     if (k.trickPlan === null || k.trickPlan === undefined) k.trickPlan = Math.random() < (k.driftSkill ?? .5) + .15;
@@ -1748,36 +1694,10 @@ function moveIdx(k, i) {
   k.total += delta; k.idx = i;
 }
 
-// Turning onto a shortcut: you have to be near its start, off the road on that side, and on the lane itself
-function joinShortcut(k) {
-  if (k.ai && !k.scGo) return;
-  for (const sc of SHORTCUTS) {
-    if (wrapI(k.idx - sc.a + 25) > 70) continue;
-    const n = scLocate(sc, k.x, k.z, 0, Math.round(sc.M * .4));
-    if (n.i >= 3 && n.d < SC_HW) { k.sc = sc; k.scI = n.i; return; }
-  }
-}
-
 function stepKart(k, h) {
-  let dist = 0, onRoad;
-  if (!k.sc && !k.air) joinShortcut(k);
-  if (k.sc) {
-    const sc = k.sc, n = scLocate(sc, k.x, k.z, k.scI - 20, k.scI + 20);
-    k.scI = n.i; k.scLat = n.lat;
-    moveIdx(k, wrapI(sc.a + Math.round(n.i / sc.M * sc.span)));
-    k.lat = sc.sa * WALL;   // far off the road, so pads and ramps on the track below don't count
-    onRoad = k.onRoad = true;
-    // Back onto the road at either end
-    if (n.i >= sc.M - 2 || n.i <= 0) {
-      k.sc = null;
-      moveIdx(k, n.i <= 0 ? sc.a : sc.b);
-    }
-  }
-  if (!k.sc) {
-    const loc = locate(k.x, k.z, k.idx, 60);
-    moveIdx(k, loc.i); k.lat = loc.lat; dist = loc.d;
-    onRoad = k.onRoad = Math.abs(loc.lat) <= HW + 1.5;
-  }
+  const loc = locate(k.x, k.z, k.idx, 60);
+  moveIdx(k, loc.i); k.lat = loc.lat;
+  const dist = loc.d, onRoad = k.onRoad = Math.abs(loc.lat) <= HW + 1.5;
 
   // Spun out: no control until the kart comes round
   if (k.spinT > 0) {
@@ -1822,11 +1742,8 @@ function stepKart(k, h) {
   k.x += Math.sin(k.moveYaw) * k.v * h;
   k.z += Math.cos(k.moveYaw) * k.v * h;
 
-  // The tyre wall holds you in and scrubs speed. On a shortcut, the fences do.
-  if (k.sc) {
-    const q = k.sc.pts[k.scI], over = Math.abs(k.scLat) - (SC_HW + 1.5);
-    if (over > 0) { const s = Math.sign(k.scLat); k.x -= q.tz * s * over; k.z += q.tx * s * over; }
-  } else if (dist > WALL) {
+  // The tyre wall holds you in and scrubs speed
+  if (dist > WALL) {
     const i = k.idx, push = (dist - WALL) / dist;
     k.x -= (k.x - cx[i]) * push; k.z -= (k.z - cz[i]) * push;
     k.v *= 1 - 2.2 * h;
@@ -1839,7 +1756,7 @@ function stepKart(k, h) {
 
   // Ramps: ride up the wedge, then fly off the top
   let ramp = null, along = 0;
-  if (!k.sc) for (const r of RAMPS) {
+  for (const r of RAMPS) {
     const d = wrapI(k.idx - r.i);
     if (d >= r.len + 1 || Math.abs(k.lat - r.lat) > r.hw) continue;
     along = d + ((k.x - cx[k.idx]) * tx[k.idx] + (k.z - cz[k.idx]) * tz[k.idx]) / DS;
@@ -1869,11 +1786,10 @@ function stepKart(k, h) {
     k.hopY = Math.max(0, k.hopY + k.hopV * h);
     if (k.hopY === 0 && k.air) land(k);
   }
-  const gy = k.sc ? k.sc.pts[k.scI].y : surfaceY(k.x, k.z, k.idx, k.lat);
+  const gy = surfaceY(k.x, k.z, k.idx, k.lat);
   k.y += (gy - k.y) * Math.min(1, h * 16);
-  let slope;
-  if (k.sc) { const p = k.sc.pts, i = k.scI; slope = -Math.atan2(p[Math.min(k.sc.M, i + 1)].y - p[Math.max(0, i - 1)].y, 2); }
-  else { const fi = wrapI(k.idx + Math.round(1.3 / DS)), bi = wrapI(k.idx - Math.round(1.3 / DS)); slope = -Math.atan2(cy[fi] - cy[bi], 2.6); }
+  const fi = wrapI(k.idx + Math.round(1.3 / DS)), bi = wrapI(k.idx - Math.round(1.3 / DS));
+  let slope = -Math.atan2(cy[fi] - cy[bi], 2.6);
   if (k.onRamp) slope -= Math.atan2(k.onRamp.h, k.onRamp.len * DS);
   else if (k.air) slope += clamp(-k.hopV * .025, -.3, .3);
   k.pitch += (slope - k.pitch) * Math.min(1, h * 10);
