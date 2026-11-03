@@ -8,7 +8,7 @@ A Mario Kart-style racer in a single HTML file. Pick a kart in the garage, choos
 
 **Ramps and tricks:** hit a blue ramp to fly. Press drift in the air to do a trick, and you get a short speed boost when you land.
 
-**Shortcuts:** two dirt lanes cut corners, one inside the hairpin and one past the pond. Look for the green SHORTCUT signs. CPUs take them too, more often on Hard.
+**Shortcuts:** two hidden dirt lanes cut corners. They aren't on the minimap or signposted, so look for gaps in the hedges. Only a few CPUs know about them (1 on Easy, 2 on Normal, 3 on Hard), and they don't take them every lap.
 
 **Computer:** arrow keys or WASD to drive, Shift or Space to drift, E to use your item, R to get back on track, Esc to pause, M to mute.
 

@@ -999,7 +999,7 @@ const SHORTCUTS = [[160, 240], [730, 850]].map(([a, b], id) => {
     const n = pts[Math.min(M, i + 1)], o = pts[Math.max(0, i - 1)], l = Math.hypot(n.x - o.x, n.z - o.z) || 1;
     q.tx = (n.x - o.x) / l; q.tz = (n.z - o.z) / l;
   });
-  return { id, a, b, sa, span: wrapI(b - a), pts, M };
+  return { id, a, b, sa, sb, span: wrapI(b - a), pts, M };
 });
 // Nearest lane point to (x, z), searching i0..i1. lat is positive to the left of the lane.
 function scLocate(sc, x, z, i0, i1) {
@@ -1042,7 +1042,7 @@ function buildWorld() {
     c.copy(grassA).lerp(grassB, .5 + .5 * Math.sin(x * .09 + Math.sin(z * .07) * 2) * Math.cos(z * .08));
     c.lerp(dirt, (1 - smooth(HW + .5, HW + 5, near.d)) * .75);
     c.lerp(sand, 1 - smooth(POND.r - 3, POND.r + 7, Math.hypot(x - POND.x, z - POND.z)));
-    c.lerp(dirt, (1 - smooth(SC_HW, SC_HW + 6, sc.d)) * .6);
+    c.lerp(dirt, (1 - smooth(SC_HW, SC_HW + 4, sc.d)) * .25);
     col.push(c.r, c.g, c.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -1189,7 +1189,7 @@ function buildWorld() {
   const spots = [];
   for (let tries = 0; tries < 9000 && spots.length < 620; tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
-    if (near.d < WALL + 3 || scNear(x, z).d < SC_HW + 7 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 8 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
+    if (near.d < WALL + 3 || scNear(x, z).d < SC_HW + 3.5 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 8 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
     spots.push([x, z, groundAt(x, z)]);
   }
   const m4 = new THREE.Object3D(), tint = new THREE.Color();
@@ -1262,22 +1262,21 @@ function buildWorld() {
 }
 
 function buildShortcuts(w) {
+  // Worn, grassy dirt rather than a bright lane, so the shortcuts are easy to miss
   const dirtTex = canvasTex(128, 128, (x, W, H) => {
-    x.fillStyle = '#9a7748'; x.fillRect(0, 0, W, H);
-    for (let i = 0; i < 2600; i++) { const v = 120 + Math.random() * 60 | 0; x.fillStyle = `rgb(${v},${v * .78 | 0},${v * .5 | 0})`; x.fillRect(Math.random() * W, Math.random() * H, 2, 2); }
-    x.fillStyle = 'rgba(70,50,28,.35)'; x.fillRect(W * .22, 0, 10, H); x.fillRect(W * .7, 0, 10, H);   // wheel ruts
+    x.fillStyle = '#6f7a3c'; x.fillRect(0, 0, W, H);
+    for (let i = 0; i < 2600; i++) { const v = 105 + Math.random() * 50 | 0; x.fillStyle = `rgb(${v},${v * .82 | 0},${v * .5 | 0})`; x.fillRect(W * (.12 + Math.random() * .76), Math.random() * H, 2, 2); }
+    for (let i = 0; i < 1400; i++) { x.fillStyle = `rgba(${60 + Math.random() * 30 | 0},${120 + Math.random() * 40 | 0},40,.8)`; x.fillRect(Math.random() * W, Math.random() * H, 2, 3); }
+    x.fillStyle = 'rgba(80,58,32,.45)'; x.fillRect(W * .25, 0, 9, H); x.fillRect(W * .68, 0, 9, H);   // wheel ruts
   });
   const dirt = new THREE.MeshLambertMaterial({ map: dirtTex });
   const fenceTex = canvasTex(64, 32, (x, W, H) => {
-    x.fillStyle = '#7a5532'; x.fillRect(0, 0, W, H);
-    x.fillStyle = '#5c3e22'; x.fillRect(0, 4, W, 3); x.fillRect(0, 18, W, 3); x.fillRect(0, 0, 5, H);
+    x.fillStyle = '#5f4528'; x.fillRect(0, 0, W, H);
+    x.fillStyle = '#46321c'; x.fillRect(0, 4, W, 3); x.fillRect(0, 18, W, 3); x.fillRect(0, 0, 5, H);
   });
   const fence = new THREE.MeshLambertMaterial({ map: fenceTex, side: THREE.DoubleSide });
-  const signMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, map: canvasTex(256, 96, (x, W, H) => {
-    x.fillStyle = '#1d6b2e'; x.fillRect(0, 0, W, H); x.strokeStyle = '#fff'; x.lineWidth = 6; x.strokeRect(5, 5, W - 10, H - 10);
-    x.fillStyle = '#fff'; x.font = 'italic 900 44px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('SHORTCUT', W / 2, H / 2 + 2);
-  }) });
-  signMat.map.wrapS = signMat.map.wrapT = THREE.ClampToEdgeWrapping;
+  const rnd = (() => { let s = 777; return () => (s = s * 16807 % 2147483647) / 2147483647; })();
+  const bushes = [];
   for (const sc of SHORTCUTS) {
     const strip = (latA, latB, yA, yB, from, to, mat, vScale) => {
       const pos = [], uv = [], idx = [];
@@ -1294,14 +1293,31 @@ function buildShortcuts(w) {
       const m = new THREE.Mesh(g, mat); m.receiveShadow = true; w.add(m);
     };
     strip(SC_HW, -SC_HW, .04, .04, 0, sc.M, dirt, 1 / 9);
-    for (const s of [-1, 1]) strip(s * (SC_HW + 1), s * (SC_HW + 1), -.2, 1, 7, sc.M - 7, fence, 1 / 2);
-    // Sign by the turn-off, facing the drivers coming towards it
-    const i = wrapI(sc.a - 22), side = sc.sa, x = cx[i] + nxOf(i) * side * (HW + 4), z = cz[i] + nzOf(i) * side * (HW + 4), y = groundAt(x, z);
-    const board = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.9), signMat);
-    board.position.set(x, y + 2.4, z); board.rotation.y = Math.atan2(-tx[i], -tz[i]);
-    w.add(board);
-    for (const o of [-1.8, 1.8]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(.12, .12, 2.4, 6), fence); post.position.set(x + tz[i] * o, y + .9, z - tx[i] * o); w.add(post); }
+    // Low fences only deep inside, where the road can't see them
+    for (const s of [-1, 1]) strip(s * (SC_HW + 1), s * (SC_HW + 1), -.2, .7, 22, sc.M - 22, fence, 1 / 2);
+    // Bushes line the lane and crowd round both mouths, so from the road it just looks like a gap in the hedge
+    for (let i = 2; i <= sc.M - 2; i += i < 24 || i > sc.M - 24 ? 1.6 : 4) {
+      const q = sc.pts[Math.round(i)];
+      for (const s of [-1, 1]) {
+        const l = s * (SC_HW + 1.7 + rnd() * 1.2);
+        bushes.push([q.x + q.tz * l, q.z - q.tx * l, .8 + rnd() * .6]);
+      }
+    }
+    for (const [end, side] of [[sc.a, sc.sa], [sc.b, sc.sb]]) for (let d = -18; d <= 18; d += 1.5) {
+      const i = wrapI(end + Math.round(d)), l = side * (HW + 2.6 + rnd() * 1.5);
+      const x = cx[i] + nxOf(i) * l, z = cz[i] + nzOf(i) * l;
+      if (scNear(x, z).d > SC_HW + 1.2) bushes.push([x, z, .7 + rnd() * .5]);
+    }
   }
+  const geo = new THREE.IcosahedronGeometry(1.5, 1), m4 = new THREE.Object3D(), tint = new THREE.Color();
+  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), bushes.length);
+  bushes.forEach(([x, z, sz], n) => {
+    m4.position.set(x, groundAt(x, z) + .5 * sz, z); m4.scale.set(sz, sz * .8, sz); m4.rotation.y = rnd() * 6;
+    m4.updateMatrix(); mesh.setMatrixAt(n, m4.matrix);
+    mesh.setColorAt(n, tint.setHSL(.26 + rnd() * .07, .5, .24 + rnd() * .1));
+  });
+  mesh.castShadow = true;
+  w.add(mesh);
 }
 
 function buildRamps(w) {
@@ -1621,7 +1637,7 @@ function makeCPU(name, opts, i, level) {
   k.topMul = lo + (hi - lo) * (i + 1) / CPU_NAMES.length;
   k.lane = (i % 3 - 1) * 4;
   k.driftSkill = { Easy: .35, Normal: .65, Hard: .9 }[level] ?? .65;
-  k.scSkill = { Easy: .15, Normal: .4, Hard: .7 }[level] ?? .4;
+  k.scSkill = 0;
   return k;
 }
 
@@ -1661,6 +1677,9 @@ function startRace(plan) {
     laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, fx: [], shake: 0, place: 0, itemShown: null,
   };
   for (const b of world.blocks) { b.down = 0; b.grow = 1; }
+  // Only a few CPUs know about the shortcuts (1 on Easy, 2 on Normal, 3 on Hard), and even they don't take them every lap
+  const level = plan ? plan.level : state.level, locals = karts.filter(k => k.ai && !k.remote).sort(() => Math.random() - .5);
+  locals.slice(0, { Easy: 1, Normal: 2, Hard: 3 }[level] ?? 2).forEach(k => { k.scSkill = { Easy: .5, Normal: .6, Hard: .75 }[level] ?? .6; });
   $('item').hidden = $('item2').hidden = !race.items;
   $('itemBtn').hidden = !race.items;
   itemReq = false;
@@ -1792,6 +1811,7 @@ function moveIdx(k, i) {
 
 // Turning onto a shortcut: you have to be near its start, off the road on that side, and on the lane itself
 function joinShortcut(k) {
+  if (k.ai && !k.scGo) return;
   for (const sc of SHORTCUTS) {
     if (wrapI(k.idx - sc.a + 25) > 70) continue;
     const n = scLocate(sc, k.x, k.z, 0, Math.round(sc.M * .4));
@@ -2068,11 +2088,6 @@ function drawMapBase() {
   x.lineJoin = 'round';
   x.strokeStyle = 'rgba(0,0,0,.55)'; x.lineWidth = 9; path(); x.stroke();
   x.strokeStyle = '#fff'; x.lineWidth = 5; path(); x.stroke();
-  for (const sc of SHORTCUTS) {
-    x.beginPath(); for (const q of sc.pts) x.lineTo(mapX(q.x), mapY(q.z));
-    x.strokeStyle = 'rgba(0,0,0,.45)'; x.lineWidth = 5; x.stroke();
-    x.strokeStyle = '#d9a35c'; x.lineWidth = 2.5; x.stroke();
-  }
   x.strokeStyle = '#14161d'; x.lineWidth = 3; x.beginPath(); x.moveTo(mapX(cx[0]), mapY(cz[0]) - 5); x.lineTo(mapX(cx[0]), mapY(cz[0]) + 5); x.stroke();
 }
 function drawHud() {
