@@ -1255,35 +1255,8 @@ function buildWorld() {
   w.add(points);
   const parts = Array.from({ length: MAX }, () => ({ life: 0, max: 1, vx: 0, vy: 0, vz: 0, r: 0, g: 0, b: 0, grav: 0 }));
 
-  buildShortcuts(w);
   buildRamps(w);
   world = { scene: w, sun, padTex, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
-}
-
-function buildShortcuts(w) {
-  const rnd = (() => { let s = 777; return () => (s = s * 16807 % 2147483647) / 2147483647; })();
-  const bushes = [];
-  for (const sc of SHORTCUTS) {
-    // No path and no fences: the lane is plain grass between hedges, which hold you in without looking like a track
-    for (let i = 2; i <= sc.M - 2; i += 1.8) {
-      const q = sc.pts[Math.round(i)];
-      for (const s of [-1, 1]) {
-        const l = s * (SC_HW + 1.7 + rnd() * 1.2);
-        bushes.push([q.x + q.tz * l, q.z - q.tx * l, .8 + rnd() * .6]);
-      }
-    }
-  }
-  // Keep every bush well clear of the road
-  for (let n = bushes.length - 1; n >= 0; n--) if (nearestAny(bushes[n][0], bushes[n][1]).d < HW + 4.5) bushes.splice(n, 1);
-  const geo = new THREE.IcosahedronGeometry(1.5, 1), m4 = new THREE.Object3D(), tint = new THREE.Color();
-  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), bushes.length);
-  bushes.forEach(([x, z, sz], n) => {
-    m4.position.set(x, groundAt(x, z) + .5 * sz, z); m4.scale.set(sz, sz * .8, sz); m4.rotation.y = rnd() * 6;
-    m4.updateMatrix(); mesh.setMatrixAt(n, m4.matrix);
-    mesh.setColorAt(n, tint.setHSL(.26 + rnd() * .07, .5, .24 + rnd() * .1));
-  });
-  mesh.castShadow = true;
-  w.add(mesh);
 }
 
 function buildRamps(w) {
@@ -1851,8 +1824,8 @@ function stepKart(k, h) {
 
   // The tyre wall holds you in and scrubs speed. On a shortcut, the fences do.
   if (k.sc) {
-    const q = k.sc.pts[k.scI], over = Math.abs(k.scLat) - (SC_HW + .6);
-    if (over > 0) { const s = Math.sign(k.scLat); k.x -= q.tz * s * over; k.z += q.tx * s * over; k.v *= 1 - 2.2 * h; }
+    const q = k.sc.pts[k.scI], over = Math.abs(k.scLat) - (SC_HW + 1.5);
+    if (over > 0) { const s = Math.sign(k.scLat); k.x -= q.tz * s * over; k.z += q.tx * s * over; }
   } else if (dist > WALL) {
     const i = k.idx, push = (dist - WALL) / dist;
     k.x -= (k.x - cx[i]) * push; k.z -= (k.z - cz[i]) * push;
