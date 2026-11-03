@@ -1264,12 +1264,7 @@ function buildShortcuts(w) {
   const rnd = (() => { let s = 777; return () => (s = s * 16807 % 2147483647) / 2147483647; })();
   const bushes = [];
   for (const sc of SHORTCUTS) {
-    // No path and no fences: the lane is plain grass between hedges, which hold you in without looking like a track.
-    // A few low bushes sit right across the way in, and you just drive through them.
-    for (const [i, lat] of [[5, -2.6], [6, 1.4], [8, 3.4], [9, -.6]]) {
-      const q = sc.pts[i];
-      bushes.push([q.x + q.tz * lat, q.z - q.tx * lat, .55 + rnd() * .2]);
-    }
+    // No path and no fences: the lane is plain grass between hedges, which hold you in without looking like a track
     for (let i = 2; i <= sc.M - 2; i += 1.8) {
       const q = sc.pts[Math.round(i)];
       for (const s of [-1, 1]) {
@@ -1277,12 +1272,9 @@ function buildShortcuts(w) {
         bushes.push([q.x + q.tz * l, q.z - q.tx * l, .8 + rnd() * .6]);
       }
     }
-    for (const [end, side] of [[sc.a, sc.sa], [sc.b, sc.sb]]) for (let d = -18; d <= 18; d += 1.5) {
-      const i = wrapI(end + Math.round(d)), l = side * (HW + 2.6 + rnd() * 1.5);
-      const x = cx[i] + nxOf(i) * l, z = cz[i] + nzOf(i) * l;
-      if (scNear(x, z).d > SC_HW + 1.2) bushes.push([x, z, .7 + rnd() * .5]);
-    }
   }
+  // Keep every bush well clear of the road
+  for (let n = bushes.length - 1; n >= 0; n--) if (nearestAny(bushes[n][0], bushes[n][1]).d < HW + 4.5) bushes.splice(n, 1);
   const geo = new THREE.IcosahedronGeometry(1.5, 1), m4 = new THREE.Object3D(), tint = new THREE.Color();
   const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), bushes.length);
   bushes.forEach(([x, z, sz], n) => {
