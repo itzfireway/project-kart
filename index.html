@@ -257,6 +257,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 'use strict';
 const V3 = THREE.Vector3;
@@ -2417,6 +2418,7 @@ function netCreate() {
   net.peer.on('open', id => {
     if (net.room) { hostListed(); return; }
     Object.assign(net, { host: true, room: code, me: id, players: [cleanPlayer({ id, ...myProfile() })] });
+    relayHost(code);
     netMessage('Press Invite, or tell friends the room code');
     drawRoom();
   });
@@ -2428,11 +2430,106 @@ function netCreate() {
   // The room server is how new friends find the room. Phones drop that link when you switch apps to send the invite,
   // and without it everyone who joins later gets "No room with that code", so get back on as soon as it drops.
   net.peer.on('disconnected', hostRelist);
-  net.peer.on('connection', conn => {
-    conn.on('data', d => onHostData(conn, d));
-    conn.on('close', () => netDrop(conn.peer));
-    conn.on('error', () => netDrop(conn.peer));
+  net.peer.on('connection', hostTakeConn);
+}
+function hostTakeConn(conn) {
+  conn.on('data', d => onHostData(conn, d));
+  conn.on('close', () => netDrop(conn.peer, conn));
+  conn.on('error', () => netDrop(conn.peer, conn));
+}
+
+// ---------- Backup route through a relay ----------
+// A direct link between two browsers is fastest, but lots of Wi-Fi (school, public, many home routers) and phone
+// networks block it. When that happens the race goes through a free public message server instead. Each player
+// gets a stand-in connection with the same send / on / close as a PeerJS one, so the race code can't tell the difference.
+const RELAY_SERVERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+const RELAY_TOPIC = 'projectkart/v1/', RELAY_PING = 3000, RELAY_TIMEOUT = 12000;
+let relay = null;   // { client, room, onMessage }
+
+function relayConnect(room, onMessage) {
+  relayClose();
+  if (typeof mqtt === 'undefined') return null;
+  const r = relay = { room, onMessage, client: null, ready: false, waiters: [], serverIdx: 0 };
+  const start = () => {
+    if (relay !== r) return;
+    const url = RELAY_SERVERS[r.serverIdx % RELAY_SERVERS.length];
+    const client = r.client = mqtt.connect(url, { clientId: 'pk_' + Math.random().toString(36).slice(2, 12), reconnectPeriod: 2000, connectTimeout: 6000, clean: true, keepalive: 20 });
+    let opened = false;
+    client.on('connect', () => {
+      opened = true; r.ready = true;
+      client.subscribe(r.topics || [], { qos: 0 });
+      r.waiters.splice(0).forEach(f => f());
+    });
+    client.on('message', (topic, buf) => {
+      let m; try { m = JSON.parse(buf.toString()); } catch (e) { return; }
+      if (relay === r && m && typeof m.f === 'string') r.onMessage(topic, m);
+    });
+    client.on('close', () => { r.ready = false; });
+    // This server can't be reached at all, so move on to the next one
+    setTimeout(() => { if (relay === r && !opened && r.client === client) { client.end(true); r.serverIdx++; start(); } }, 7000);
+  };
+  start();
+  return r;
+}
+function relaySubscribe(topics) { if (!relay) return; relay.topics = topics; if (relay.ready) relay.client.subscribe(topics, { qos: 0 }); }
+function relayPublish(topic, m) { if (relay?.ready) try { relay.client.publish(topic, JSON.stringify(m), { qos: 0 }); } catch (e) {} }
+function relayClose() { if (relay) { try { relay.client?.end(false); } catch (e) {} relay = null; } }
+
+// A stand-in for a PeerJS DataConnection
+function relayConn(peerId, sendTopic) {
+  const handlers = {};
+  const conn = {
+    peer: peerId, me: net.me, open: false, relayed: true, heard: performance.now(),
+    on(evt, fn) { (handlers[evt] ||= []).push(fn); return conn; },
+    emit(evt, arg) { (handlers[evt] || []).forEach(f => { try { f(arg); } catch (e) { console.error(e); } }); },
+    send(d) { if (!conn.closed) relayPublish(sendTopic, { f: conn.me, d }); },
+    close() {
+      if (conn.closed) return;
+      conn.closed = true; conn.open = false; clearInterval(conn.pinger);
+      relayPublish(sendTopic, { f: conn.me, bye: 1 });
+      conn.emit('close');
+    },
+  };
+  // Pings keep the link alive in the lobby, and silence for a while means the other side is gone
+  conn.pinger = setInterval(() => {
+    if (performance.now() - conn.heard > RELAY_TIMEOUT) { conn.close(); return; }
+    relayPublish(sendTopic, { f: conn.me, p: 1 });
+  }, RELAY_PING);
+  conn.hear = m => {
+    if (conn.closed) return;
+    conn.heard = performance.now();
+    if (m.bye) { conn.closed = true; conn.open = false; clearInterval(conn.pinger); conn.emit('close'); return; }
+    if ('d' in m) conn.emit('data', m.d);
+  };
+  return conn;
+}
+
+// Host: listen for friends who come in through the relay
+function relayHost(room) {
+  const relayed = new Map();
+  relayConnect(room, (topic, m) => {
+    if (!net.host || net.room !== room || m.f === net.me) return;
+    let conn = relayed.get(m.f);
+    if (!conn || conn.closed) {
+      if (!('d' in m)) return;   // a ping or goodbye from someone we don't know
+      conn = relayConn(m.f.slice(0, 64), RELAY_TOPIC + room + '/to/' + m.f);
+      conn.open = true;
+      relayed.set(m.f, conn);
+      hostTakeConn(conn);
+    }
+    conn.hear(m);
   });
+  relaySubscribe([RELAY_TOPIC + room + '/host']);
+}
+
+// Friend: reach the host through the relay. Calls back with the connection once the relay server is up.
+function relayGuest(room, ready) {
+  const conn = relayConn(ROOM_PREFIX + room, RELAY_TOPIC + room + '/host');
+  const r = relayConnect(room, (topic, m) => conn.hear(m));
+  if (!r) return null;
+  relaySubscribe([RELAY_TOPIC + room + '/to/' + net.me]);
+  r.waiters.push(() => { if (conn.closed || conn.open) return; conn.open = true; ready(conn); });
+  return conn;
 }
 
 let relistTimer = 0, relistTries = 0;
@@ -2459,12 +2556,27 @@ function netJoin(tries = 0) {
   net.peer = netPeer(undefined);
   net.peer.on('open', id => {
     net.me = id;
-    const conn = net.up = net.peer.connect(ROOM_PREFIX + code, { reliable: true });
-    conn.on('open', () => conn.send({ t: 'join', ...myProfile() }));
-    conn.on('data', d => onGuestData(d, code));
-    conn.on('close', () => { if (net.room) netReset('The host left the room'); });
-    conn.on('error', () => netMessage('Connection failed'));
-    setTimeout(() => { if (net.up === conn && !conn.open) netMessage('Found the room but could not connect. Your networks are blocking it, try both on the same Wi-Fi'); }, 15000);
+    const peer = net.peer;
+    const useConn = conn => {
+      net.up = conn;
+      conn.on('data', d => { if (net.up === conn) onGuestData(d, code); });
+      conn.on('close', () => { if (net.up === conn && net.room) netReset('The host left the room'); });
+      conn.send({ t: 'join', ...myProfile() });
+    };
+    const direct = net.peer.connect(ROOM_PREFIX + code, { reliable: true });
+    let viaRelay = null;
+    const fallBack = () => {
+      if (net.peer !== peer || net.up || viaRelay) return;
+      netMessage('Connecting another way…');
+      try { direct.close(); } catch (e) {}
+      viaRelay = relayGuest(code, useConn);
+      if (!viaRelay) { netMessage('Could not connect, check your internet'); return; }
+      setTimeout(() => { if (net.peer === peer && !net.room) netMessage('Could not connect, check your internet and the room code'); }, 20000);
+    };
+    direct.on('open', () => { if (net.peer === peer && !net.up && !viaRelay) useConn(direct); else direct.close(); });
+    direct.on('error', fallBack);
+    // Networks that block direct links usually just never answer, so don't wait long
+    setTimeout(fallBack, 5000);
   });
   net.peer.on('error', e => {
     // The host may be getting back onto the room server right now, so keep asking for a bit before giving up
@@ -2477,9 +2589,12 @@ function netReset(message) {
   if (race?.online) leaveRace();
   clearTimeout(net.goTimer);
   clearTimeout(relistTimer);
-  const peer = net.peer;
+  const peer = net.peer, relayedConns = [net.up, ...net.conns.values()].filter(c => c?.relayed);
   Object.assign(net, { peer: null, host: false, room: '', me: '', up: null, players: [] });
   net.conns.clear();
+  // Closed after the reset so their close handlers see we've already left
+  relayedConns.forEach(c => c.close());
+  relayClose();
   if (peer) try { peer.destroy(); } catch (e) {}
   netMessage(message);
   drawRoom();
@@ -2493,7 +2608,8 @@ function dropRacer(k) {
   k.view.dispose();
 }
 
-function netDrop(id) {
+function netDrop(id, conn) {
+  if (conn && net.conns.get(id) !== conn) return;
   if (!net.conns.delete(id)) return;
   const left = net.players.find(p => p.id === id);
   net.players = net.players.filter(p => p.id !== id);
