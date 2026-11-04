@@ -84,6 +84,8 @@
   #netPlayers small { color: var(--dim); }
   #netMsg { min-height: 1em; margin: 6px 0 0; font-size: 13px; color: var(--hot); }
   #laps { grid-template-columns: repeat(5, 1fr); }
+  #netRoomCode { flex: 1; align-self: center; font-size: 13px; color: var(--dim); }
+  #netRoomCode b { font-size: 22px; letter-spacing: 3px; color: inherit; font-family: ui-monospace, Menlo, monospace; margin-left: 4px; }
   .hostNote { margin: 4px 0 0; font-size: 12px; color: var(--dim); }
   /* Race polish: item slot, start lights, speed lines, hit flashes */
   #item { position: absolute; top: 14px; left: 50%; width: 84px; height: 84px; margin-left: -42px; display: flex; align-items: center; justify-content: center; font-size: 46px; font-style: normal; background: rgba(18, 20, 28, .6); border: 3px solid rgba(255, 255, 255, .45); border-radius: 18px; }
@@ -191,7 +193,7 @@
       <div class="netRow"><input type="text" id="netCode" placeholder="Room code" maxlength="8" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="netJoin">Join</button></div>
     </div>
     <div id="netRoom" hidden>
-      <div class="netRow"><input type="text" id="netLink" readonly><button id="netShare">Invite</button></div>
+      <div class="netRow"><div id="netRoomCode">Room code <b id="netCodeShow"></b></div><button id="netShare">Invite</button></div>
       <ol id="netPlayers"></ol>
       <label id="netCpuRow">Fill grid with CPUs <input type="checkbox" id="netCpu" checked></label>
       <button id="netLeave">Leave room</button>
@@ -2376,7 +2378,7 @@ function drawRoom() {
   $('start').disabled = inRoom && !net.host;
   $('start').textContent = !inRoom ? 'Start race' : net.host ? `Start race (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
   if (!inRoom) return;
-  $('netLink').value = location.origin + location.pathname + '?r=' + net.room;
+  $('netCodeShow').textContent = net.room.toUpperCase();
   $('netPlayers').innerHTML = net.players.map((p, i) => `<li>${esc(p.name)} <small>${BODIES[p.body].name}${i === 0 ? ', host' : ''}${p.id === net.me ? ', you' : ''}</small></li>`).join('');
 }
 function netProfileChanged() {
@@ -2415,7 +2417,7 @@ function netCreate() {
   net.peer.on('open', id => {
     if (net.room) { hostListed(); return; }
     Object.assign(net, { host: true, room: code, me: id, players: [cleanPlayer({ id, ...myProfile() })] });
-    netMessage('Send friends the invite link');
+    netMessage('Press Invite, or tell friends the room code');
     drawRoom();
   });
   net.peer.on('error', e => {
@@ -2462,11 +2464,11 @@ function netJoin(tries = 0) {
     conn.on('data', d => onGuestData(d, code));
     conn.on('close', () => { if (net.room) netReset('The host left the room'); });
     conn.on('error', () => netMessage('Connection failed'));
-    setTimeout(() => { if (net.up === conn && !conn.open) netMessage('No answer. Check the code, or try a different network'); }, 12000);
+    setTimeout(() => { if (net.up === conn && !conn.open) netMessage('Found the room but could not connect. Your networks are blocking it, try both on the same Wi-Fi'); }, 15000);
   });
   net.peer.on('error', e => {
     // The host may be getting back onto the room server right now, so keep asking for a bit before giving up
-    if (e?.type === 'peer-unavailable' && tries < 5) { netMessage('Looking for the room…'); const peer = net.peer; setTimeout(() => { if (net.peer === peer && !net.room) netJoin(tries + 1); }, 2500); return; }
+    if (e?.type === 'peer-unavailable' && tries < 20) { netMessage(tries < 3 ? 'Looking for the room…' : 'Waiting for the host to come back to the game…'); const peer = net.peer; setTimeout(() => { if (net.peer === peer && !net.room) netJoin(tries + 1); }, 2500); return; }
     netMessage(peerProblem(e));
   });
 }
@@ -2679,11 +2681,12 @@ $('netJoin').onclick = () => { goFullscreen(); netJoin(); };
 $('netCode').onkeydown = e => { if (e.key === 'Enter') netJoin(); };
 $('netLeave').onclick = () => netReset('');
 $('netShare').onclick = async () => {
-  const url = $('netLink').value;
+  if (!net.room) return;
+  const url = location.origin + location.pathname + '?r=' + net.room;
   try {
-    if (TOUCH && navigator.share) await navigator.share({ title: 'Race me in Project Kart', url });
+    if (TOUCH && navigator.share) await navigator.share({ title: 'Race me in Project Kart', text: `Room code ${net.room.toUpperCase()}`, url });
     else { await navigator.clipboard.writeText(url); netMessage('Link copied, send it to your friends'); }
-  } catch (e) { $('netLink').select(); }
+  } catch (e) { if (e?.name !== 'AbortError') netMessage(url); }
 };
 {
   const code = new URLSearchParams(location.search).get('r');
