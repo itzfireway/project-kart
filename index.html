@@ -2413,11 +2413,19 @@ function netCreate() {
   netMessage('Opening room…');
   net.peer = netPeer(ROOM_PREFIX + code);
   net.peer.on('open', id => {
+    if (net.room) { hostListed(); return; }
     Object.assign(net, { host: true, room: code, me: id, players: [cleanPlayer({ id, ...myProfile() })] });
     netMessage('Send friends the invite link');
     drawRoom();
   });
-  net.peer.on('error', e => netMessage(peerProblem(e)));
+  net.peer.on('error', e => {
+    // Losing the room server is not fatal: friends already in the room stay connected, and we keep trying to get back on
+    if (net.room && ['network', 'server-error', 'socket-error', 'socket-closed', 'disconnected', 'unavailable-id'].includes(e?.type)) return hostRelist();
+    netMessage(peerProblem(e));
+  });
+  // The room server is how new friends find the room. Phones drop that link when you switch apps to send the invite,
+  // and without it everyone who joins later gets "No room with that code", so get back on as soon as it drops.
+  net.peer.on('disconnected', hostRelist);
   net.peer.on('connection', conn => {
     conn.on('data', d => onHostData(conn, d));
     conn.on('close', () => netDrop(conn.peer));
@@ -2425,7 +2433,22 @@ function netCreate() {
   });
 }
 
-function netJoin() {
+let relistTimer = 0, relistTries = 0;
+function hostRelist() {
+  const peer = net.peer;
+  if (!net.host || !peer || peer.destroyed || !peer.disconnected) return;
+  clearTimeout(relistTimer);
+  relistTimer = setTimeout(() => {
+    if (net.peer !== peer || peer.destroyed || !peer.disconnected) return;
+    relistTries++;
+    try { peer.reconnect(); } catch (e) {}
+    relistTimer = setTimeout(hostRelist, 4000);
+  }, Math.min(5000, 400 * 2 ** relistTries));
+}
+function hostListed() { relistTries = 0; clearTimeout(relistTimer); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { relistTries = 0; hostRelist(); } });
+
+function netJoin(tries = 0) {
   const code = $('netCode').value.trim().toLowerCase();
   if (!code) { netMessage('Enter a room code'); return; }
   if (!netReady()) return;
@@ -2441,12 +2464,17 @@ function netJoin() {
     conn.on('error', () => netMessage('Connection failed'));
     setTimeout(() => { if (net.up === conn && !conn.open) netMessage('No answer. Check the code, or try a different network'); }, 12000);
   });
-  net.peer.on('error', e => netMessage(peerProblem(e)));
+  net.peer.on('error', e => {
+    // The host may be getting back onto the room server right now, so keep asking for a bit before giving up
+    if (e?.type === 'peer-unavailable' && tries < 5) { netMessage('Looking for the room…'); const peer = net.peer; setTimeout(() => { if (net.peer === peer && !net.room) netJoin(tries + 1); }, 2500); return; }
+    netMessage(peerProblem(e));
+  });
 }
 
 function netReset(message) {
   if (race?.online) leaveRace();
   clearTimeout(net.goTimer);
+  clearTimeout(relistTimer);
   const peer = net.peer;
   Object.assign(net, { peer: null, host: false, room: '', me: '', up: null, players: [] });
   net.conns.clear();
