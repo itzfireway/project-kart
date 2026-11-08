@@ -84,6 +84,8 @@
   #netPlayers small { color: var(--dim); }
   #netMsg { min-height: 1em; margin: 6px 0 0; font-size: 13px; color: var(--hot); }
   #laps { grid-template-columns: repeat(5, 1fr); }
+  #weather { grid-template-columns: repeat(3, 1fr); }
+  #flash.bolt { background: rgba(235, 240, 255, .8); animation: fade .35s ease-out forwards; }
   #netRoomCode { flex: 1; align-self: center; font-size: 13px; color: var(--dim); }
   #netRoomCode b { font-size: 22px; letter-spacing: 3px; color: inherit; font-family: ui-monospace, Menlo, monospace; margin-left: 4px; }
   .hostNote { margin: 4px 0 0; font-size: 12px; color: var(--dim); }
@@ -202,10 +204,12 @@
   </div>
   <h2>Laps</h2>
   <div class="levels" id="laps"></div>
+  <h2>Weather</h2>
+  <div class="levels" id="weather"></div>
   <h2>Race options</h2>
   <label>Lucky blocks <input type="checkbox" id="itemsBox" checked></label>
   <label>Music <input type="checkbox" id="musicBox" checked></label>
-  <p class="hostNote" id="hostNote" hidden>In a room, the host's laps and lucky blocks are used.</p>
+  <p class="hostNote" id="hostNote" hidden>In a room, the host's laps, weather and lucky blocks are used.</p>
   <h2>CPU level</h2>
   <div class="levels" id="levels"></div>
   <h2>Kart</h2>
@@ -809,20 +813,24 @@ el.addEventListener('wheel', e => {
 
 // Panel
 const q = new URLSearchParams(location.search);
+// How wet each weather is: 0 is clear sky, 1 is a full thunderstorm
+const WEATHERS = { sunny: { label: '☀️ Sunny', wet: 0 }, rainy: { label: '🌧️ Rainy', wet: .6 }, thunder: { label: '⛈️ Thunder', wet: 1 } };
+const ZAP_RAIN = 9;   // seconds of rain after someone uses a zap
 const state = {
   body: BODIES[q.get('body')] ? q.get('body') : 'sprint',
   paint: PAINTS.find(p => p.name.toLowerCase() === q.get('paint')) || PAINTS[0],
   number: 7,
   level: 'Normal',
-  laps: 3, items: true, music: true,
+  laps: 3, items: true, music: true, weather: 'sunny',
 };
 try {
   const saved = JSON.parse(localStorage.getItem('kart-race') || '{}');
   if ([1, 2, 3, 5, 7].includes(saved.laps)) state.laps = saved.laps;
   if (typeof saved.items === 'boolean') state.items = saved.items;
   if (typeof saved.music === 'boolean') state.music = saved.music;
+  if (WEATHERS[saved.weather]) state.weather = saved.weather;
 } catch (e) {}
-function saveRaceOptions() { try { localStorage.setItem('kart-race', JSON.stringify({ laps: state.laps, items: state.items, music: state.music })); } catch (e) {} }
+function saveRaceOptions() { try { localStorage.setItem('kart-race', JSON.stringify({ laps: state.laps, items: state.items, music: state.music, weather: state.weather })); } catch (e) {} }
 const $ = id => document.getElementById(id);
 const turnBox = $('turn'), spinBox = $('spin'), steerBox = $('steer'), numberBox = $('number');
 
@@ -1289,6 +1297,7 @@ function buildWorld() {
   for (let i = 0; i < sp.count; i++) { c.copy(hor).lerp(top, Math.pow(clamp(sp.getY(i) / 450, 0, 1), .6)); sc.push(c.r, c.g, c.b); }
   sky.setAttribute('color', new THREE.Float32BufferAttribute(sc, 3));
   w.add(new THREE.Mesh(sky, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, toneMapped: false })));
+  const skyMat = w.children[w.children.length - 1].material;
   const puff = canvasTex(128, 128, (x, W) => {
     for (let i = 0; i < 26; i++) {
       const px = W * (.18 + rnd() * .64), py = W * (.38 + rnd() * .24), r = W * (.08 + rnd() * .12), g = x.createRadialGradient(px, py, 0, px, py, r);
@@ -1296,13 +1305,26 @@ function buildWorld() {
       x.fillStyle = g; x.fillRect(0, 0, W, W);
     }
   });
+  const cloudMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: .9 });
   for (let i = 0; i < 22; i++) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: .9 }));
+    const s = new THREE.Sprite(cloudMat);
     const a = rnd() * 6.3, r = 280 + rnd() * 460;
     s.position.set(Math.cos(a) * r, 110 + rnd() * 90, Math.sin(a) * r);
     s.scale.set(190 + rnd() * 170, 110 + rnd() * 60, 1);
     w.add(s);
   }
+  // Heavy, low storm clouds that only show up when it rains
+  const stormMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: 0, color: 0x3c424c });
+  const storm = new THREE.Group();
+  for (let i = 0; i < 34; i++) {
+    const s = new THREE.Sprite(stormMat), a = rnd() * 6.3, r = 120 + rnd() * 560;
+    s.position.set(Math.cos(a) * r, 85 + rnd() * 50, Math.sin(a) * r);
+    s.scale.set(320 + rnd() * 220, 150 + rnd() * 70, 1);
+    storm.add(s);
+  }
+  storm.visible = false;
+  w.add(storm);
+
   // A glow where the sun is, in the same direction the shadows come from
   const glowTex = canvasTex(128, 128, (x, W) => {
     const g = x.createRadialGradient(W / 2, W / 2, 0, W / 2, W / 2, W / 2);
@@ -1325,7 +1347,8 @@ function buildWorld() {
     w.environment = pm.fromScene(e, .02).texture;
     pm.dispose();
   }
-  w.add(new THREE.HemisphereLight(0xdcefff, 0x5d7a44, .62));
+  const hemi = new THREE.HemisphereLight(0xdcefff, 0x5d7a44, .62);
+  w.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff1dc, 1.05);
   sun.castShadow = true;
   sun.shadow.mapSize.set(SHADOW_SIZE, SHADOW_SIZE);
@@ -1343,8 +1366,15 @@ function buildWorld() {
   w.add(points);
   const parts = Array.from({ length: MAX }, () => ({ life: 0, max: 1, vx: 0, vy: 0, vz: 0, r: 0, g: 0, b: 0, grav: 0 }));
 
+  // Rain: short falling streaks kept in a box around the camera
+  const DROPS = TOUCH ? 1600 : 4500, dropPos = new Float32Array(DROPS * 6), dropGeo = new THREE.BufferGeometry();
+  dropGeo.setAttribute('position', new THREE.BufferAttribute(dropPos, 3));
+  const rain = new THREE.LineSegments(dropGeo, new THREE.LineBasicMaterial({ color: 0xb8c6d8, transparent: true, opacity: .55, depthWrite: false }));
+  rain.frustumCulled = false; rain.visible = false;
+  w.add(rain);
+
   buildRamps(w);
-  world = { scene: w, sun, sunGlow, ripple, padTex, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
+  world = { scene: w, sun, sunGlow, ripple, padTex, skyMat, cloudMat, stormMat, storm, hemi, road, rain, dropPos, dropGeo, DROPS, wet: 0, bolt: 0, nextBolt: 6, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
 }
 
 function buildRamps(w) {
@@ -1520,6 +1550,7 @@ function zapAll(owner) {
   }
   if (owner !== race.you) { flash('zap'); race.shake = .35; }
   sound.sfx('zap');
+  race.rainT = ZAP_RAIN;
 }
 
 // Spins a kart out. Returns false if a shield or superstar saved it.
@@ -1700,12 +1731,14 @@ function startRace(plan) {
   });
   race = {
     karts, you, online: !!plan, waiting: !!plan, goAt: 0, t: -3.6, over: false, paused: false, shownAt: 0, camYaw: you.yaw, camX: 0, camY: 0, camZ: 0, lastBeep: 4, lapShown: 1, doneT: 0,
-    laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, fx: [], shake: 0, place: 0, itemShown: null,
+    laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, weather: plan ? plan.weather || 'sunny' : state.weather, rainT: 0, fx: [], shake: 0, place: 0, itemShown: null,
   };
   for (const b of world.blocks) { b.down = 0; b.grow = 1; }
   $('item').hidden = $('item2').hidden = !race.items;
   $('itemBtn').hidden = !race.items;
   itemReq = false;
+  world.wet = WEATHERS[race.weather].wet; world.nextBolt = 4 + Math.random() * 5;
+  seedRain();
   race.camX = you.x - Math.sin(you.yaw) * 9; race.camZ = you.z - Math.cos(you.yaw) * 9; race.camY = you.y + 4;
   renderer.toneMappingExposure = .92;
   drawMapBase();
@@ -2196,6 +2229,63 @@ function placeRaceCam(dt) {
   if (Math.abs(raceCam.fov - fov) > .05) { raceCam.fov += (fov - raceCam.fov) * Math.min(1, dt * 6); raceCam.updateProjectionMatrix(); }
 }
 
+// ---------- Weather ----------
+// world.wet slides towards the chosen weather (or rain, for a while after a zap) and everything follows it:
+// darker sky and clouds, thicker fog, dimmer sun, a shiny wet road, rain, and in a thunderstorm, lightning.
+const SKY_CLEAR = new THREE.Color(1, 1, 1), SKY_STORM = new THREE.Color(.36, .39, .45), FOG_CLEAR = new THREE.Color(0xcfe9f7), FOG_STORM = new THREE.Color(0x5f6874);
+function seedRain() {
+  const c = raceCam.position;
+  for (let i = 0; i < world.DROPS; i++) placeDrop(i, c.x + (Math.random() - .5) * 70, c.y + Math.random() * 40 - 8, c.z + (Math.random() - .5) * 70);
+  world.dropGeo.attributes.position.needsUpdate = true;
+}
+function placeDrop(i, x, y, z) {
+  const p = world.dropPos, o = i * 6, len = .9 + world.wet * .6;
+  p[o] = x; p[o + 1] = y; p[o + 2] = z;
+  p[o + 3] = x + world.wet * .25; p[o + 4] = y + len; p[o + 5] = z;
+}
+function stepWeather(dt) {
+  const r = race, W = world, base = WEATHERS[r.weather].wet;
+  r.rainT = Math.max(0, r.rainT - dt);
+  const want = Math.max(base, r.rainT > 0 ? WEATHERS.rainy.wet : 0);
+  W.wet += (want - W.wet) * Math.min(1, dt * (want > W.wet ? 1.2 : .4));
+  const wet = W.wet, dark = Math.min(1, wet / .6) * .75 + Math.max(0, wet - .6) / .4 * .25;
+  // Lightning: only in a proper storm
+  W.bolt = Math.max(0, W.bolt - dt * 3);
+  if (wet > .85 && dt > 0 && (W.nextBolt -= dt) <= 0) {
+    W.nextBolt = 5 + Math.random() * 8;
+    W.bolt = 1;
+    flash('bolt');
+    sound.thunder(.6 + Math.random() * 1.4);
+  }
+  W.skyMat.color.copy(SKY_CLEAR).lerp(SKY_STORM, dark);
+  W.cloudMat.color.copy(SKY_CLEAR).lerp(SKY_STORM, dark * .8);
+  W.stormMat.opacity = Math.min(1, dark * 1.3);
+  W.storm.visible = dark > .01;
+  W.storm.position.set(raceCam.position.x, 0, raceCam.position.z);
+  W.scene.fog.color.copy(FOG_CLEAR).lerp(FOG_STORM, dark);
+  W.scene.fog.near = 180 - 130 * dark; W.scene.fog.far = 900 - 560 * dark;
+  W.sun.intensity = 1.05 - (.6 + .3 * Math.max(0, wet - .6) / .4) * dark + W.bolt * 1.4;
+  W.hemi.intensity = .62 - (.15 + .22 * Math.max(0, wet - .6) / .4) * dark + W.bolt * 1.1;
+  W.sunGlow.material.opacity = 1 - dark;
+  W.road.roughness = .9 - .55 * dark;
+  W.road.envMapIntensity = .4 + .5 * dark;
+  sound.rain(wet);
+  // Rain falls straight-ish, a touch slanted in a storm, and wraps around the camera
+  const n = Math.round(W.DROPS * Math.min(1, wet / .6) * (wet > .6 ? 1 : .55));
+  W.rain.visible = n > 0;
+  if (!n) return;
+  W.dropGeo.setDrawRange(0, n * 2);
+  const p = W.dropPos, c = raceCam.position, fall = (38 + wet * 22) * dt, side = wet * 6 * dt;
+  for (let i = 0; i < n; i++) {
+    const o = i * 6;
+    let x = p[o] + side, y = p[o + 1] - fall, z = p[o + 2];
+    if (y < c.y - 10) { y += 46; x = c.x + (Math.random() - .5) * 70; z = c.z + (Math.random() - .5) * 70; }
+    else if (Math.abs(x - c.x) > 36 || Math.abs(z - c.z) > 36) { x = c.x + (Math.random() - .5) * 70; z = c.z + (Math.random() - .5) * 70; }
+    placeDrop(i, x, y, z);
+  }
+  W.dropGeo.attributes.position.needsUpdate = true;
+}
+
 function raceFrame(dt) {
   const r = race;
   if (!r.paused) {
@@ -2228,6 +2318,7 @@ function raceFrame(dt) {
   s.position.set(y.x + 55, y.y + 120, y.z + 40);
   s.target.position.set(y.x, y.y, y.z);
   world.sunGlow.position.set(55, 120, 40).setLength(800).add(raceCam.position);
+  stepWeather(r.paused ? 0 : dt);
   world.ripple.offset.x += dt * .02; world.ripple.offset.y += dt * .013;
   renderer.render(world.scene, raceCam);
 }
@@ -2309,11 +2400,14 @@ const sound = (() => {
       const scr = ctx.createBufferSource(), sf = ctx.createBiquadFilter(), sg = ctx.createGain();
       scr.buffer = noiseBuf; scr.loop = true; sf.type = 'bandpass'; sf.Q.value = 6; sf.frequency.value = 1800; sg.gain.value = 0;
       scr.connect(sf); sf.connect(sg); sg.connect(master);
-      a.start(); b.start(); scr.start();
-      eng = { a, b, f, g, scr, sf, sg };
+      const rn = ctx.createBufferSource(), rf = ctx.createBiquadFilter(), rg = ctx.createGain();
+      rn.buffer = noiseBuf; rn.loop = true; rf.type = 'bandpass'; rf.Q.value = .4; rf.frequency.value = 2600; rg.gain.value = 0;
+      rn.connect(rf); rf.connect(rg); rg.connect(master);
+      a.start(); b.start(); scr.start(); rn.start();
+      eng = { a, b, f, g, scr, sf, sg, rn, rg };
     },
     stop() {
-      if (eng) { for (const n of [eng.a, eng.b, eng.scr]) n.stop(); eng = null; }
+      if (eng) { for (const n of [eng.a, eng.b, eng.scr, eng.rn]) n.stop(); eng = null; }
       this.stopMusic();
     },
     startMusic() {
@@ -2326,6 +2420,13 @@ const sound = (() => {
       clearInterval(music.timer);
       music.gain.gain.setTargetAtTime(0, now(), .1);
       music = null;
+    },
+    rain(wet) { if (eng) eng.rg.gain.setTargetAtTime(wet * .09, now(), .3); },
+    // A crack, then a long low rumble, a moment after the flash
+    thunder(delay) {
+      if (!ctx) return;
+      hiss(.5, { vol: .25, f0: 2500, f1: 300, at: delay * .3 });
+      hiss(2.8, { vol: .45, f0: 220, f1: 40, type: 'lowpass', at: delay * .3 + .1 });
     },
     quiet(on) { if (master) master.gain.setTargetAtTime(on || muted ? 0 : 1, now(), .05); },
     engine(k) {
@@ -2439,6 +2540,13 @@ LAP_CHOICES.forEach(n => {
   btn.setAttribute('aria-pressed', state.laps === n);
   btn.onclick = () => { state.laps = n; saveRaceOptions(); document.querySelectorAll('#laps button').forEach(b => b.setAttribute('aria-pressed', b === btn)); };
   $('laps').append(btn);
+});
+Object.entries(WEATHERS).forEach(([key, w]) => {
+  const btn = document.createElement('button');
+  btn.textContent = w.label;
+  btn.setAttribute('aria-pressed', state.weather === key);
+  btn.onclick = () => { state.weather = key; saveRaceOptions(); document.querySelectorAll('#weather button').forEach(b => b.setAttribute('aria-pressed', b === btn)); };
+  $('weather').append(btn);
 });
 $('itemsBox').checked = state.items;
 $('itemsBox').onchange = () => { state.items = $('itemsBox').checked; saveRaceOptions(); };
@@ -2854,7 +2962,7 @@ function onGuestData(d, code) {
     case 'start': {
       const racers = Array.isArray(d.racers) ? d.racers.slice(0, MAX_PLAYERS).map(cleanPlayer) : [];
       if (!racers.some(p => p.id === net.me)) break;
-      netBegin({ racers, laps: LAP_CHOICES.includes(d.laps) ? d.laps : 3, items: d.items !== false });
+      netBegin({ racers, laps: LAP_CHOICES.includes(d.laps) ? d.laps : 3, items: d.items !== false, weather: WEATHERS[d.weather] ? d.weather : 'sunny' });
       netToHost({ t: 'ready' });
       break;
     }
@@ -2886,9 +2994,9 @@ function netStartRace() {
     for (let i = 0; i < MAX_PLAYERS - net.players.length; i++) cpus.push(cleanPlayer({ id: 'cpu' + i, name: CPU_NAMES[i], body: ids[i % 3], paint: paints[i % paints.length], number: 11 + i * 7, cpu: true }));
   }
   // Friends start at the back, like you do against the CPUs
-  const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items;
-  netBroadcast({ t: 'start', racers, laps, items });
-  netBegin({ racers, level, laps, items });
+  const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather;
+  netBroadcast({ t: 'start', racers, laps, items, weather });
+  netBegin({ racers, level, laps, items, weather });
   net.ready = new Set([net.me]);
   clearTimeout(net.goTimer);
   net.goTimer = setTimeout(netGoAll, READY_WAIT);
