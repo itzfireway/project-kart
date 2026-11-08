@@ -1274,13 +1274,14 @@ function buildWorld() {
   for (const m of [tufts, flowers]) { m.receiveShadow = true; m.frustumCulled = false; w.add(m); }
 
   // Far mountains
-  const rocks = lam({ color: 0x74808f, flatShading: true }), snow = lam({ color: 0xf1f4f8, flatShading: true });
+  const rocks = lam({ color: 0x74808f, flatShading: true }), snow = lam({ color: 0xf1f4f8, flatShading: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
   for (let i = 0; i < 26; i++) {
     const a = i / 26 * Math.PI * 2 + rnd() * .1, r = 620 + rnd() * 120, h = 90 + rnd() * 110, wide = 90 + rnd() * 90;
     const m = new THREE.Mesh(new THREE.ConeGeometry(wide, h, 5 + (rnd() * 3 | 0)), rocks);
     m.position.set(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r); w.add(m);
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(wide * .3, h * .3, m.geometry.parameters.radialSegments), snow);
-    cap.position.set(m.position.x, h * .85 - 2, m.position.z); w.add(cap);
+    // The snow cap is a touch wider and taller than the rock under it, so the two never share a surface and flicker
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(wide * .335, h * .32, m.geometry.parameters.radialSegments), snow);
+    cap.position.set(m.position.x, h * .855 - 2, m.position.z); w.add(cap);
   }
 
   // Sky dome, clouds, light
