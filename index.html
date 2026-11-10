@@ -1306,6 +1306,13 @@ function buildWorld() {
       x.fillStyle = g; x.fillRect(0, 0, W, W);
     }
   });
+  // Phone browsers sprinkle tiny colour noise into canvas gradients. Where a cloud is almost see-through that noise
+  // gets blown up into bright coloured dots, so keep only the see-through amount and make every pixel pure white.
+  {
+    const cx2 = puff.image.getContext('2d'), im = cx2.getImageData(0, 0, 128, 128), d = im.data;
+    for (let i = 0; i < d.length; i += 4) { d[i] = d[i + 1] = d[i + 2] = 255; if (d[i + 3] < 3) d[i + 3] = 0; }
+    cx2.putImageData(im, 0, 0);
+  }
   // Don't tile: with tiling, the blurrier copies phones use for far-away things mix in the opposite edge, drawing faint boxes round clouds
   puff.wrapS = puff.wrapT = THREE.ClampToEdgeWrapping;
   const cloudMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: .9 });
@@ -1329,10 +1336,18 @@ function buildWorld() {
   w.add(storm);
 
   // A glow where the sun is, in the same direction the shadows come from
+  // Worked out pixel by pixel rather than with a canvas gradient, so phones can't add coloured noise to it
   const glowTex = canvasTex(128, 128, (x, W) => {
-    const g = x.createRadialGradient(W / 2, W / 2, 0, W / 2, W / 2, W / 2);
-    g.addColorStop(0, 'rgba(255,255,250,1)'); g.addColorStop(.12, 'rgba(255,250,225,.95)'); g.addColorStop(.3, 'rgba(255,236,190,.3)'); g.addColorStop(1, 'rgba(255,230,180,0)');
-    x.fillStyle = g; x.fillRect(0, 0, W, W);
+    const im = x.createImageData(W, W), d = im.data;
+    const stops = [[0, 255, 255, 250, 1], [.12, 255, 250, 225, .95], [.3, 255, 236, 190, .3], [1, 255, 230, 180, 0]];
+    for (let y = 0; y < W; y++) for (let xx = 0; xx < W; xx++) {
+      const t = Math.min(1, Math.hypot(xx + .5 - W / 2, y + .5 - W / 2) / (W / 2));
+      let k = 0; while (t > stops[k + 1][0]) k++;
+      const A = stops[k], B = stops[k + 1], f = (t - A[0]) / (B[0] - A[0]), i = (y * W + xx) * 4;
+      for (let c = 1; c <= 3; c++) d[i + c - 1] = A[c] + (B[c] - A[c]) * f;
+      d[i + 3] = 255 * (A[4] + (B[4] - A[4]) * f);
+    }
+    x.putImageData(im, 0, 0);
   });
   glowTex.wrapS = glowTex.wrapT = THREE.ClampToEdgeWrapping;
   const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, fog: false, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
