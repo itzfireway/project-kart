@@ -1300,11 +1300,14 @@ function buildWorld() {
   const skyMat = w.children[w.children.length - 1].material;
   const puff = canvasTex(128, 128, (x, W) => {
     for (let i = 0; i < 26; i++) {
-      const px = W * (.18 + rnd() * .64), py = W * (.38 + rnd() * .24), r = W * (.08 + rnd() * .12), g = x.createRadialGradient(px, py, 0, px, py, r);
+      // Every puff stays inside the picture, so the cloud fades out before its edges instead of being cut off in a straight line
+      const px = W * (.27 + rnd() * .46), py = W * (.4 + rnd() * .2), r = W * (.07 + rnd() * .13), g = x.createRadialGradient(px, py, 0, px, py, r);
       g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
       x.fillStyle = g; x.fillRect(0, 0, W, W);
     }
   });
+  // Don't tile: with tiling, the blurrier copies phones use for far-away things mix in the opposite edge, drawing faint boxes round clouds
+  puff.wrapS = puff.wrapT = THREE.ClampToEdgeWrapping;
   const cloudMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: .9 });
   for (let i = 0; i < 22; i++) {
     const s = new THREE.Sprite(cloudMat);
@@ -1331,6 +1334,7 @@ function buildWorld() {
     g.addColorStop(0, 'rgba(255,255,250,1)'); g.addColorStop(.12, 'rgba(255,250,225,.95)'); g.addColorStop(.3, 'rgba(255,236,190,.3)'); g.addColorStop(1, 'rgba(255,230,180,0)');
     x.fillStyle = g; x.fillRect(0, 0, W, W);
   });
+  glowTex.wrapS = glowTex.wrapT = THREE.ClampToEdgeWrapping;
   const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, fog: false, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
   sunGlow.scale.setScalar(260);
   w.add(sunGlow);
