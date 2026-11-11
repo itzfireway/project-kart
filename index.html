@@ -2491,12 +2491,12 @@ function drawResults() {
 
 // ---------- Grand Prix ----------
 // All three tracks in a row. Points for every finishing place; the most points after the last race wins the cup.
-// Solo cups always go Meadow, Snow, City. In a room the host shuffles the tracks for every new cup, so nobody picks.
+// Every new cup races the three tracks in a random order (in a room the host shuffles and tells everyone), so nobody picks.
 const GP_TRACKS = ['meadow', 'snow', 'city'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
 let gp = null;
 function newGp() {
   const order = [...GP_TRACKS];
-  if (net.room) for (let i = order.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [order[i], order[j]] = [order[j], order[i]]; }
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [order[i], order[j]] = [order[j], order[i]]; }
   return { round: 0, pts: {}, order };
 }
 // Totals including this race. Karts still driving are counted in the place they're in now.
@@ -3047,7 +3047,7 @@ function drawTrackPicker() {
   document.querySelectorAll('#modes button').forEach(b => { b.disabled = guest; b.style.opacity = guest ? .55 : ''; });
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !locked && b.dataset.id === state.track); b.disabled = locked; b.style.opacity = locked ? .55 : ''; });
   $('gpNote').hidden = !cup || guest;
-  $('gpNote').textContent = `Race all three tracks${inRoom ? ' in a random order, picked fresh for every cup' : ' in a row'}. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
+  $('gpNote').textContent = `Race all three tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
   // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow
   const snowy = !cup && TRACKS[state.track].theme === 'snow';
   document.querySelectorAll('#weather button').forEach(b => { b.textContent = snowy ? SNOW_WEATHER[b.dataset.id] : WEATHERS[b.dataset.id].label; });
