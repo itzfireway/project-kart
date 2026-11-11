@@ -85,6 +85,8 @@
   #netMsg { min-height: 1em; margin: 6px 0 0; font-size: 13px; color: var(--hot); }
   #laps { grid-template-columns: repeat(5, 1fr); }
   #weather { grid-template-columns: repeat(3, 1fr); }
+  #modes { grid-template-columns: repeat(2, 1fr); }
+  .card .gpHead { margin: 4px 0 6px; font-weight: 800; font-style: italic; color: var(--hot); }
   #flash.bolt { background: rgba(235, 240, 255, .8); animation: fade .35s ease-out forwards; }
   #netRoomCode { flex: 1; align-self: center; font-size: 13px; color: var(--dim); }
   #netRoomCode b { font-size: 22px; letter-spacing: 3px; color: inherit; font-family: ui-monospace, Menlo, monospace; margin-left: 4px; }
@@ -202,6 +204,12 @@
     </div>
     <p id="netMsg"></p>
   </div>
+  <h2>Mode</h2>
+  <div class="levels" id="modes"></div>
+  <p class="hostNote" id="gpNote" hidden>Race all three tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
+  <p class="hostNote" id="modeNote" hidden>Grand Prix is for racing the CPUs. In a room you race the track picked below.</p>
+  <h2>Track</h2>
+  <div class="bodies" id="tracks"></div>
   <h2>Laps</h2>
   <div class="levels" id="laps"></div>
   <h2>Weather</h2>
@@ -209,7 +217,7 @@
   <h2>Race options</h2>
   <label>Lucky blocks <input type="checkbox" id="itemsBox" checked></label>
   <label>Music <input type="checkbox" id="musicBox" checked></label>
-  <p class="hostNote" id="hostNote" hidden>In a room, the host's laps, weather and lucky blocks are used.</p>
+  <p class="hostNote" id="hostNote" hidden>In a room, the host's track, laps, weather and lucky blocks are used.</p>
   <h2>CPU level</h2>
   <div class="levels" id="levels"></div>
   <h2>Kart</h2>
@@ -821,7 +829,7 @@ const state = {
   paint: PAINTS.find(p => p.name.toLowerCase() === q.get('paint')) || PAINTS[0],
   number: 7,
   level: 'Normal',
-  laps: 3, items: true, music: true, weather: 'sunny',
+  laps: 3, items: true, music: true, weather: 'sunny', track: 'meadow', mode: 'race',
 };
 try {
   const saved = JSON.parse(localStorage.getItem('kart-race') || '{}');
@@ -829,8 +837,10 @@ try {
   if (typeof saved.items === 'boolean') state.items = saved.items;
   if (typeof saved.music === 'boolean') state.music = saved.music;
   if (WEATHERS[saved.weather]) state.weather = saved.weather;
+  if (TRACKS[saved.track]) state.track = saved.track;
+  if (saved.mode === 'gp') state.mode = 'gp';
 } catch (e) {}
-function saveRaceOptions() { try { localStorage.setItem('kart-race', JSON.stringify({ laps: state.laps, items: state.items, music: state.music, weather: state.weather })); } catch (e) {} }
+function saveRaceOptions() { try { localStorage.setItem('kart-race', JSON.stringify({ laps: state.laps, items: state.items, music: state.music, weather: state.weather, track: state.track, mode: state.mode })); } catch (e) {} }
 const $ = id => document.getElementById(id);
 const turnBox = $('turn'), spinBox = $('spin'), steerBox = $('steer'), numberBox = $('number');
 
@@ -874,13 +884,39 @@ if (q.has('steer')) steerBox.value = q.get('steer');
 rebuild();
 
 // ---------- Track ----------
-// The road is a closed spline of [x, z, height]. Everything else (road mesh, terrain, walls, CPU lines) comes from
-// samples taken along it, so moving a point here reshapes the whole circuit.
-const TRACK_PTS = [
-  [-20, -130, 0], [90, -130, 0], [155, -112, 1], [182, -50, 3], [150, 8, 6], [92, 0, 8], [52, -48, 7], [-2, -58, 5],
-  [-38, -8, 4], [6, 46, 5], [88, 62, 7], [165, 82, 9], [182, 145, 11], [120, 182, 10], [20, 165, 7], [-60, 178, 4],
-  [-140, 175, 2], [-186, 120, 1], [-150, 58, 2], [-96, 30, 3], [-120, -30, 3], [-180, -60, 2], [-178, -115, 1], [-125, -132, 0],
-];
+// Each road is a closed spline of [x, z, height]. Everything else (road mesh, terrain, walls, CPU lines) comes from
+// samples taken along it, so moving a point reshapes the whole circuit.
+// Each track has its own spline, a theme for the scenery, and optionally hand-placed ramps, pads and ? block rows
+// (sample indexes). Tracks without them get them placed automatically on straight bits of road.
+const TRACKS = {
+  meadow: {
+    name: 'Meadow Ring', icon: '🌳', blurb: 'Green hills, a pond and a long back straight', theme: 'meadow', pond: { x: -60, z: 95, r: 26 },
+    pts: [
+      [-20, -130, 0], [90, -130, 0], [155, -112, 1], [182, -50, 3], [150, 8, 6], [92, 0, 8], [52, -48, 7], [-2, -58, 5],
+      [-38, -8, 4], [6, 46, 5], [88, 62, 7], [165, 82, 9], [182, 145, 11], [120, 182, 10], [20, 165, 7], [-60, 178, 4],
+      [-140, 175, 2], [-186, 120, 1], [-150, 58, 2], [-96, 30, 3], [-120, -30, 3], [-180, -60, 2], [-178, -115, 1], [-125, -132, 0],
+    ],
+    ramps: [[14, 4.5], [445, -4.5], [620, 4.5]], pads: [[62, 0], [300, 4], [560, -4], [842, 3]], blocks: [150, 420, 700, 975],
+  },
+  snow: {
+    name: 'Frosty Peaks', icon: '❄️', blurb: 'Snowy pines, a frozen lake and a big climb', theme: 'snow', pond: { x: -10, z: 110, r: 30 },
+    pts: [
+      [0, -150, 0], [110, -150, 1], [172, -118, 3], [184, -45, 7], [140, 10, 11], [70, 8, 13], [22, 42, 14], [52, 104, 12],
+      [128, 104, 10], [176, 140, 8], [150, 188, 6], [70, 194, 5], [-50, 186, 4], [-118, 160, 4], [-150, 100, 6], [-96, 40, 8],
+      [-62, -10, 8], [-110, -48, 6], [-170, -60, 4], [-188, -118, 2], [-128, -152, 0],
+    ],
+  },
+  city: {
+    name: 'Neon City', icon: '🌃', blurb: 'Night streets, tight corners and city lights', theme: 'city', pond: null,
+    pts: [
+      [-60, -160, 0], [40, -160, 0], [128, -160, 0], [165, -138, 0], [172, -95, 0], [170, -40, 1], [150, -8, 2], [100, 0, 3],
+      [52, 10, 3], [30, 50, 3], [40, 100, 2], [80, 122, 2], [148, 124, 1], [176, 150, 1], [166, 186, 0], [120, 196, 0],
+      [0, 196, 0], [-120, 196, 0], [-166, 180, 0], [-182, 140, 0], [-170, 100, 0], [-128, 72, 0], [-82, 50, 0], [-62, 2, 0],
+      [-92, -40, 0], [-150, -62, 0], [-178, -100, 0], [-176, -140, 0], [-140, -160, 0],
+    ],
+  },
+};
+const TRACK_IDS = Object.keys(TRACKS);
 const HW = 9, WALL = HW + 26, N = 1100;   // HW is half the road width, WALL is how far from the centre you can stray
 const LAP_CHOICES = [1, 2, 3, 5, 7];
 const LEVELS = { Easy: [.82, .9], Normal: [.9, .97], Hard: [.97, 1.03] };
@@ -889,15 +925,18 @@ const CPU_NAMES = ['Turbo', 'Nitro', 'Pixel', 'Rusty', 'Zippy', 'Comet', 'Blaze'
 const cx = new Float32Array(N), cy = new Float32Array(N), cz = new Float32Array(N);   // centre line
 const tx = new Float32Array(N), tz = new Float32Array(N);                              // direction of travel
 const kap = new Float32Array(N), vmax = new Float32Array(N);                           // signed curvature, safe CPU speed
-let DS = 1;
+let DS = 1, TRACK = null, TRACK_ID = '', POND = null, RAMPS = [], PADS = [], BLOCK_ROWS = [];
 const nxOf = i => tz[i], nzOf = i => -tx[i];   // unit vector to the left of the track at sample i
 const wrapI = i => ((i % N) + N) % N;
 const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
-{
-  const curve = new THREE.CatmullRomCurve3(TRACK_PTS.map(p => v3(p[0], p[2], p[1])), true, 'centripetal');
+function loadTrack(id) {
+  if (!TRACKS[id]) id = 'meadow';
+  if (TRACK_ID === id) return;
+  TRACK_ID = id; TRACK = TRACKS[id]; POND = TRACK.pond;
+  const curve = new THREE.CatmullRomCurve3(TRACK.pts.map(p => v3(p[0], p[2], p[1])), true, 'centripetal');
   curve.arcLengthDivisions = 6000;
   const pts = curve.getSpacedPoints(N);
   DS = curve.getLength() / N;
@@ -917,7 +956,23 @@ const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t
   // Corner speed from curvature, then a backwards pass so CPUs brake before the corner rather than in it
   for (let i = 0; i < N; i++) vmax[i] = Math.min(46, 1.02 / Math.max(.001, Math.abs(kap[i])));
   for (let n = 0; n < N * 2; n++) { const i = wrapI(-n), j = wrapI(i + 1); vmax[i] = Math.min(vmax[i], Math.sqrt(vmax[j] ** 2 + 2 * 15 * DS)); }
+  // The first straight-ish stretch at or after a point part way round the lap, kept clear of everything placed so far
+  BLOCK_ROWS = TRACK.blocks || [.17, .43, .71, .93].map(f => Math.round(f * N));
+  const taken = [...BLOCK_ROWS, 0, N - 50];   // and off the starting grid
+  const straight = (frac, len) => {
+    const from = Math.round(frac * N);
+    for (let k = 0; k < N / 4; k++) {
+      const i = wrapI(from + k);
+      let ok = !taken.some(t => Math.min(wrapI(i - t), wrapI(t - i)) < 45);
+      for (let j = -6; j <= len && ok; j++) if (Math.abs(kap[wrapI(i + j)]) > .007) ok = false;
+      if (ok) { taken.push(i); return i; }
+    }
+    return from;
+  };
+  RAMPS = (TRACK.ramps || [[.05, 4.5], [.4, -4.5], [.66, 4.5]].map(([f, lat]) => [straight(f, 40), lat])).map(([i, lat]) => ({ i, lat, len: 7, hw: 3.6, h: 1.8 }));
+  PADS = (TRACK.pads || [[.1, 0], [.3, 4], [.55, -4], [.8, 3]].map(([f, lat]) => [straight(f, 22), lat])).map(([i, lat]) => ({ i, lat, len: 16 }));
 }
+loadTrack('meadow');
 
 // Finds the closest centre-line sample near a hint. Sliding this window along is what stops a kart jumping to a
 // nearby part of the track. Results land in LOC so the physics loop doesn't allocate.
@@ -940,11 +995,15 @@ function nearestAny(x, z) {
 
 // Terrain heights on a grid: rolling hills that settle onto the road height near the track
 const GRID = 176, CELL = 3, GROUND = new Float32Array((GRID + 1) * (GRID + 1)), HALF = GRID * CELL / 2;
-const POND = { x: -60, z: 95, r: 26 };
 function naturalHeight(x, z) {
-  let h = 2.2 + Math.sin(x * .021) * Math.cos(z * .017) * 3.2 + Math.sin(x * .05 + 1.3) * Math.sin(z * .043) * 1.3;
-  const p = Math.hypot(x - POND.x, z - POND.z);
-  h = h * smooth(POND.r - 6, POND.r + 22, p) - 2.2 * (1 - smooth(POND.r - 6, POND.r + 6, p));
+  const th = TRACK.theme;
+  let h = th === 'city' ? 0 : th === 'snow'
+    ? 3.5 + Math.sin(x * .018) * Math.cos(z * .015) * 6 + Math.sin(x * .045 + 1.3) * Math.sin(z * .04) * 2.2
+    : 2.2 + Math.sin(x * .021) * Math.cos(z * .017) * 3.2 + Math.sin(x * .05 + 1.3) * Math.sin(z * .043) * 1.3;
+  if (POND) {
+    const p = Math.hypot(x - POND.x, z - POND.z);
+    h = h * smooth(POND.r - 6, POND.r + 22, p) - 2.2 * (1 - smooth(POND.r - 6, POND.r + 6, p));
+  }
   return h - (h + 1.4) * smooth(HALF * .78, HALF * .98, Math.max(Math.abs(x), Math.abs(z)));
 }
 function groundAt(x, z) {
@@ -993,20 +1052,56 @@ const PAD_SPEED = 1.15, PAD_TIME = 2.5;
 // ---------- Ramps ----------
 // Ramps sit on one half of the road. Drive up one and you take off; press drift in the air for a trick, and you
 // get a small boost when you land.
-const RAMPS = [[14, 4.5], [445, -4.5], [620, 4.5]].map(([i, lat]) => ({ i, lat, len: 7, hw: 3.6, h: 1.8 }));
 const FLIP = .5, TRICK_TIME = .55, TRICK_SPEED = 1.15;
-const PADS = [[62, 0], [300, 4], [560, -4], [842, 3]].map(([i, lat]) => ({ i, lat, len: 16 }));
+// Colours and light for each kind of scenery. fog is [colour, near, far]; hemi is [sky, ground, strength].
+const THEMES = {
+  meadow: {
+    ground: [0x3f8f2e, 0x5aa83c], edge: 0x8f7a4e, shore: 0xd9c58c, outer: 0x4a9835, kerb: ['#e22d24', '#f6f6f2'], wall: ['#d62a20', '#f4f4f0'],
+    skyTop: 0x2f86e0, skyHor: 0xcfe9f7, field: 0x4a8a35, fog: [0xcfe9f7, 180, 900], fogStorm: 0x5f6874, skyStorm: [.36, .39, .45], cloud: [1, 1, 1],
+    hemi: [0xdcefff, 0x5d7a44, .62], sun: [0xfff1dc, 1.05],
+  },
+  snow: {
+    ground: [0xd5dfeb, 0xeef3f9], edge: 0xa9b7c6, shore: 0xc4dceb, outer: 0xdfe7f0, kerb: ['#1d6fe0', '#f6f6f2'], wall: ['#1d6fe0', '#f4f4f0'],
+    skyTop: 0x5f93c9, skyHor: 0xe3ebf3, field: 0xe3eaf2, fog: [0xdfe7ef, 150, 720], fogStorm: 0x7d8796, skyStorm: [.5, .53, .6], cloud: [.95, .96, .98],
+    hemi: [0xeef4ff, 0xa9b8cc, .66], sun: [0xfff4e6, .9],
+  },
+  city: {
+    ground: [0x30323b, 0x3a3d47], edge: 0x5a5d67, shore: 0x30323b, outer: 0x202128, kerb: ['#ffc21a', '#1b1c22'], wall: ['#ff2fb4', '#24d8ff'],
+    skyTop: 0x03040b, skyHor: 0x2b1f55, field: 0x16161d, fog: [0x1d1838, 150, 780], fogStorm: 0x15141f, skyStorm: [.62, .62, .7], cloud: [.22, .2, .32],
+    hemi: [0x7a84d0, 0x2c2440, .55], sun: [0xa9bcff, .55],
+  },
+};
+
 let world = null;
+function disposeWorld() {
+  if (!world) return;
+  world.scene.traverse(o => {
+    o.geometry?.dispose();
+    for (const m of [].concat(o.material || [])) { for (const k of ['map', 'emissiveMap', 'normalMap']) m[k]?.dispose(); m.dispose(); }
+  });
+  world.scene.environment?.dispose();
+  world = null;
+}
 function buildWorld() {
   const w = new THREE.Scene();
   const rnd = (() => { let s = 12345; return () => (s = s * 16807 % 2147483647) / 2147483647; })();
   const lam = o => new THREE.MeshLambertMaterial(o);
+  const TH = TRACK.theme, LOOK = THEMES[TH], SNOW = TH === 'snow', CITY = TH === 'city', MEADOW = TH === 'meadow';
+  const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
+  const pondDist = (x, z) => POND ? Math.hypot(x - POND.x, z - POND.z) : 1e9;
+  // The grandstand sits on the left of the road just before the start line, facing it
+  const standI = wrapI(-8), standRot = Math.atan2(-nxOf(standI), -nzOf(standI));
+  const standX = cx[standI] + nxOf(standI) * 43, standZ = cz[standI] + nzOf(standI) * 43;
+  const nearStand = (x, z) => {
+    const dx = x - standX, dz = z - standZ, lx = dx * Math.cos(standRot) - dz * Math.sin(standRot), lz = dx * Math.sin(standRot) + dz * Math.cos(standRot);
+    return Math.abs(lx) < 62 && lz > -30 && lz < 20;
+  };
 
   // Terrain
   const size = GRID * CELL, geo = new THREE.PlaneGeometry(size, size, GRID, GRID);
   geo.rotateX(-Math.PI / 2);
   const p = geo.attributes.position, col = [], c = new THREE.Color();
-  const grassA = new THREE.Color(0x3f8f2e).convertSRGBToLinear(), grassB = new THREE.Color(0x5aa83c).convertSRGBToLinear(), dirt = new THREE.Color(0x8f7a4e).convertSRGBToLinear(), sand = new THREE.Color(0xd9c58c).convertSRGBToLinear();
+  const grassA = lin(LOOK.ground[0]), grassB = lin(LOOK.ground[1]), dirt = lin(LOOK.edge), sand = lin(LOOK.shore);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i), near = nearestAny(x, z);
     let h = cy[near.i] + (naturalHeight(x, z) - cy[near.i]) * smooth(HW + 4, HW + 26, near.d);
@@ -1015,14 +1110,29 @@ function buildWorld() {
     p.setY(i, h);
     c.copy(grassA).lerp(grassB, .5 + .5 * Math.sin(x * .09 + Math.sin(z * .07) * 2) * Math.cos(z * .08));
     c.lerp(dirt, (1 - smooth(HW + .5, HW + 5, near.d)) * .75);
-    c.lerp(sand, 1 - smooth(POND.r - 3, POND.r + 7, Math.hypot(x - POND.x, z - POND.z)));
-    c.multiplyScalar(.9 + rnd() * .18);
+    if (POND) c.lerp(sand, 1 - smooth(POND.r - 3, POND.r + 7, pondDist(x, z)));
+    c.multiplyScalar(CITY ? .94 + rnd() * .1 : .9 + rnd() * .18);
     col.push(c.r, c.g, c.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   geo.computeVertexNormals();
   // Grass: thousands of little blades in slightly different shades, multiplied by the terrain colours
-  const grassTex = canvasTex(512, 512, (x, W, H) => {
+  const grassTex = SNOW ? canvasTex(512, 512, (x, W, H) => {
+    // Snow: soft drifts with a few glittering crystals
+    x.fillStyle = '#f2f5f9'; x.fillRect(0, 0, W, H);
+    for (let i = 0; i < 220; i++) {
+      const px = rnd() * W, py = rnd() * H, r = 20 + rnd() * 70, g = x.createRadialGradient(px, py, 0, px, py, r), v = rnd() < .5 ? '205,215,232' : '255,255,255';
+      g.addColorStop(0, `rgba(${v},.45)`); g.addColorStop(1, `rgba(${v},0)`);
+      x.fillStyle = g; x.fillRect(px - r, py - r, r * 2, r * 2);
+    }
+    for (let i = 0; i < 9000; i++) { const v = 225 + rnd() * 30 | 0; x.fillStyle = `rgb(${v - 8},${v - 3},${v})`; x.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 1.5, 1 + rnd() * 1.5); }
+  }, 40, 40) : CITY ? canvasTex(512, 512, (x, W, H) => {
+    // City: concrete paving slabs
+    x.fillStyle = '#d4d4d6'; x.fillRect(0, 0, W, H);
+    for (let i = 0; i < 30000; i++) { const v = 170 + rnd() * 70 | 0; x.fillStyle = `rgba(${v},${v},${v + 3},.6)`; x.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 2, 1 + rnd() * 2); }
+    x.strokeStyle = 'rgba(70,70,76,.7)'; x.lineWidth = 3;
+    for (let k = 0; k <= 4; k++) { x.beginPath(); x.moveTo(k * W / 4, 0); x.lineTo(k * W / 4, H); x.stroke(); x.beginPath(); x.moveTo(0, k * H / 4); x.lineTo(W, k * H / 4); x.stroke(); }
+  }, 60, 60) : canvasTex(512, 512, (x, W, H) => {
     x.fillStyle = '#e6eadc'; x.fillRect(0, 0, W, H);
     for (let i = 0; i < 260; i++) {
       const px = rnd() * W, py = rnd() * H, r = 20 + rnd() * 50, g = x.createRadialGradient(px, py, 0, px, py, r), v = rnd() < .5 ? '200,210,180' : '255,255,240';
@@ -1039,7 +1149,7 @@ function buildWorld() {
   const terrain = new THREE.Mesh(geo, lam({ map: grassTex, vertexColors: true }));
   terrain.receiveShadow = true;
   w.add(terrain);
-  const outer = new THREE.Mesh(new THREE.CircleGeometry(1100, 48), lam({ color: new THREE.Color(0x4a9835).convertSRGBToLinear() }));
+  const outer = new THREE.Mesh(new THREE.CircleGeometry(1100, 48), lam({ color: lin(LOOK.outer) }));
   outer.rotation.x = -Math.PI / 2; outer.position.y = -1.5;
   w.add(outer);
   // Water: a normal map built from overlapping waves, scrolled each frame so the surface ripples
@@ -1058,9 +1168,14 @@ function buildWorld() {
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(5, 5);
     return t;
   })();
-  const pond = new THREE.Mesh(new THREE.CircleGeometry(POND.r + 6, 64), new THREE.MeshStandardMaterial({ color: 0x1f6fa8, metalness: .1, roughness: .06, normalMap: ripple, normalScale: new THREE.Vector2(.35, .35), envMapIntensity: 1.3 }));
-  pond.rotation.x = -Math.PI / 2; pond.position.set(POND.x, -.85, POND.z);
-  w.add(pond);
+  // A pond, or on the snow track a frozen lake that barely ripples
+  if (POND) {
+    const pond = new THREE.Mesh(new THREE.CircleGeometry(POND.r + 6, 64), SNOW
+      ? new THREE.MeshStandardMaterial({ color: 0xa8d4ec, metalness: .05, roughness: .12, normalMap: ripple, normalScale: new THREE.Vector2(.04, .04), envMapIntensity: 1.2 })
+      : new THREE.MeshStandardMaterial({ color: 0x1f6fa8, metalness: .1, roughness: .06, normalMap: ripple, normalScale: new THREE.Vector2(.35, .35), envMapIntensity: 1.3 }));
+    pond.rotation.x = -Math.PI / 2; pond.position.set(POND.x, -.85, POND.z);
+    w.add(pond);
+  }
 
   // Road, kerbs, start line and boost pads
   const tiles = Math.round(N * DS / 22);
@@ -1085,7 +1200,7 @@ function buildWorld() {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
     w.add(new THREE.Mesh(g, skirt));
   }
-  const kerbTex = canvasTex(4, 16, (x, W, H) => { x.fillStyle = '#e22d24'; x.fillRect(0, 0, W, H); x.fillStyle = '#f6f6f2'; x.fillRect(0, 0, W, H / 2); });
+  const kerbTex = canvasTex(4, 16, (x, W, H) => { x.fillStyle = LOOK.kerb[0]; x.fillRect(0, 0, W, H); x.fillStyle = LOOK.kerb[1]; x.fillRect(0, 0, W, H / 2); });
   const kerb = lam({ map: kerbTex });
   // Kerbs only on the outside and inside of real corners
   for (let i = 0; i < N;) {
@@ -1107,7 +1222,13 @@ function buildWorld() {
   for (const pad of PADS) ribbon(pad.i, pad.i + pad.len, pad.lat + 3.2, pad.lat - 3.2, .05, padMat, 3, w);
 
   // Tyre wall along the run-off limit, skipped wherever it would fold through the inside of a corner
-  const wallTex = canvasTex(64, 16, (x, W, H) => { for (let i = 0; i < 4; i++) { x.fillStyle = i % 2 ? '#f4f4f0' : '#d62a20'; x.fillRect(i * W / 4, 0, W / 4, H); } });
+  // Tyres in the countryside; in the city, glowing neon barriers
+  const wallTex = CITY ? canvasTex(64, 16, (x, W, H) => {
+    x.fillStyle = '#101018'; x.fillRect(0, 0, W, H);
+    x.fillStyle = LOOK.wall[0]; x.fillRect(0, 2, W, 3);
+    x.fillStyle = LOOK.wall[1]; x.fillRect(0, H - 5, W, 3);
+    x.fillStyle = 'rgba(255,255,255,.5)'; for (let i = 0; i < 4; i++) x.fillRect(i * W / 4 + 6, 7, 4, 2);
+  }) : canvasTex(64, 16, (x, W, H) => { for (let i = 0; i < 4; i++) { x.fillStyle = i % 2 ? LOOK.wall[1] : LOOK.wall[0]; x.fillRect(i * W / 4, 0, W / 4, H); } });
   const wallPos = [], wallUv = [], wallIdx = [];
   for (const s of [-1, 1]) {
     let prev = null;
@@ -1127,7 +1248,7 @@ function buildWorld() {
   wallGeo.setAttribute('uv', new THREE.Float32BufferAttribute(wallUv, 2));
   wallGeo.setIndex(wallIdx);
   wallGeo.computeVertexNormals();
-  w.add(new THREE.Mesh(wallGeo, lam({ map: wallTex, side: THREE.DoubleSide })));
+  w.add(new THREE.Mesh(wallGeo, CITY ? new THREE.MeshBasicMaterial({ map: wallTex, side: THREE.DoubleSide }) : lam({ map: wallTex, side: THREE.DoubleSide })));
 
   // Corner arrows on the outside of tight bends
   const signs = [];
@@ -1166,7 +1287,8 @@ function buildWorld() {
     gantry.add(beam);
     // Grandstand behind the outside of the start straight, with a crowd of coloured dots
     const stand = new THREE.Group();
-    stand.position.set(-30, 0, -173);
+    stand.position.set(standX, groundAt(standX, standZ) - .3, standZ);
+    stand.rotation.y = standRot;
     w.add(stand);
     const conc = lam({ color: 0xb4b6bc }), crowdGeo = new THREE.SphereGeometry(.42, 6, 5), crowd = new THREE.InstancedMesh(crowdGeo, lam({ color: 0xffffff }), 880), o = new THREE.Object3D(), cc = new THREE.Color();
     let n = 0;
@@ -1191,16 +1313,16 @@ function buildWorld() {
 
   // Trees past the wall
   const spots = [];
-  for (let tries = 0; tries < 9000 && spots.length < 620; tries++) {
+  for (let tries = 0; tries < 9000 && spots.length < (CITY ? 0 : 620); tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
-    if (near.d < WALL + 3 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 8 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
+    if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z)) continue;
     spots.push([x, z, groundAt(x, z)]);
   }
   // Two kinds of tree: tall pines with three tiers, and round leafy ones made of a few chunky blobs
   const m4 = new THREE.Object3D(), tint = new THREE.Color();
-  const pines = spots.filter(() => rnd() < .55), rounds = spots.filter(s => !pines.includes(s));
+  const pines = spots.filter(() => SNOW || rnd() < .55), rounds = spots.filter(s => !pines.includes(s));
   const leafy = lam({ color: 0xffffff, flatShading: true }), bark = lam({ color: 0x6d4a2d });
-  const inst = (geo, mat, n) => { const m = new THREE.InstancedMesh(geo, mat, n); m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; w.add(m); return m; };
+  const inst = (geo, mat, n) => { const m = new THREE.InstancedMesh(geo, mat, Math.max(1, n)); m.setColorAt(0, new THREE.Color(1, 1, 1)); m.count = n; m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; w.add(m); return m; };
   const trunks = inst(new THREE.CylinderGeometry(.35, .55, 3, 7), bark, spots.length);
   const tiers = [[3, 7, 4.6], [2.3, 5.4, 7.2], [1.5, 3.8, 9.4]].map(([r, h, y]) => ({ y, m: inst(new THREE.ConeGeometry(r, h, 8), leafy, pines.length) }));
   const blobGeo = new THREE.IcosahedronGeometry(1, 1), blobs = [[0, 5.2, 0, 2.6], [1.3, 4.4, .6, 1.8], [-1.2, 4.6, -.5, 1.9], [.2, 6.6, -.3, 1.8]];
@@ -1210,7 +1332,9 @@ function buildWorld() {
     const s = .8 + rnd() * .9, rot = rnd() * 6.3;
     m4.scale.setScalar(s); m4.rotation.set(0, rot, 0);
     m4.position.set(x, y + 1.4 * s, z); m4.updateMatrix(); trunks.setMatrixAt(ti++, m4.matrix);
-    tint.setHSL(.3 + rnd() * .06, .45 + rnd() * .15, .2 + rnd() * .08);
+    // Snowy pines are mostly frosted white, with a few dark green ones poking through
+    if (SNOW && rnd() < .7) tint.setHSL(.55 + rnd() * .05, .15 + rnd() * .1, .62 + rnd() * .14);
+    else tint.setHSL(.3 + rnd() * .06, .45 + rnd() * .15, .2 + rnd() * .08);
     for (const t of tiers) { m4.position.set(x, y + t.y * s, z); m4.updateMatrix(); t.m.setMatrixAt(i, m4.matrix); t.m.setColorAt(i, tint); }
   });
   rounds.forEach(([x, z, y], i) => {
@@ -1228,9 +1352,9 @@ function buildWorld() {
   // Bushes hugging the outside of the tyre wall
   const bushSpots = [];
   for (let i = 0; i < N; i += 4) for (const s of [-1, 1]) {
-    if (rnd() < .45) continue;
+    if (CITY || rnd() < .45) continue;
     const off = WALL + 2.2 + rnd() * 3, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
-    if (nearestAny(x, z).d < WALL + 1.5 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 4 || (Math.abs(z + 178) < 24 && Math.abs(x + 30) < 62)) continue;
+    if (nearestAny(x, z).d < WALL + 1.5 || pondDist(x, z) < (POND?.r ?? 0) + 4 || nearStand(x, z)) continue;
     bushSpots.push([x, z]);
   }
   const bushes = inst(new THREE.IcosahedronGeometry(1, 1), leafy, bushSpots.length);
@@ -1238,7 +1362,8 @@ function buildWorld() {
   bushSpots.forEach(([x, z], i) => {
     const s = .9 + rnd() * 1.1;
     m4.position.set(x, groundAt(x, z) + s * .35, z); m4.rotation.set(rnd() * 3, rnd() * 3, 0); m4.scale.set(s * 1.3, s * .85, s * 1.2); m4.updateMatrix();
-    bushes.setMatrixAt(i, m4.matrix); bushes.setColorAt(i, tint.setHSL(.24 + rnd() * .1, .5, .22 + rnd() * .08));
+    // On the snow track these are snow drifts rather than bushes
+    bushes.setMatrixAt(i, m4.matrix); bushes.setColorAt(i, SNOW ? tint.setHSL(.58, .3, .86 + rnd() * .08) : tint.setHSL(.24 + rnd() * .1, .5, .22 + rnd() * .08));
   });
 
   // Grass tufts and wildflowers on the run-off between the road and the wall
@@ -1255,15 +1380,15 @@ function buildWorld() {
     g.setAttribute('normal', new THREE.Float32BufferAttribute(pos.map((_, k) => k % 3 === 1 ? 1 : 0), 3));
     return g;
   })();
-  const TUFTS = TOUCH ? 3500 : 9000, FLOWERS = TOUCH ? 500 : 1300;
-  const tufts = new THREE.InstancedMesh(tuftGeo, lam({ vertexColors: true, side: THREE.DoubleSide }), TUFTS);
-  const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.13, 0), lam({ color: 0xffffff }), FLOWERS);
+  const TUFTS = !MEADOW ? 0 : TOUCH ? 3500 : 9000, FLOWERS = !MEADOW ? 0 : TOUCH ? 500 : 1300;
+  const tufts = new THREE.InstancedMesh(tuftGeo, lam({ vertexColors: true, side: THREE.DoubleSide }), Math.max(1, TUFTS));
+  const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.13, 0), lam({ color: 0xffffff }), Math.max(1, FLOWERS));
   const petal = [0xffffff, 0xffe14a, 0xff6fae, 0xb98cff, 0xff8a3d];
   let nt = 0, nf = 0;
   for (let tries = 0; tries < 60000 && (nt < TUFTS || nf < FLOWERS); tries++) {
     const i = rnd() * N | 0, lat = (rnd() < .5 ? -1 : 1) * (HW + 1.8 + rnd() * (WALL + 6 - HW)), x = cx[i] + nxOf(i) * lat + (rnd() - .5) * 4, z = cz[i] + nzOf(i) * lat + (rnd() - .5) * 4;
     const d = nearestAny(x, z).d;
-    if (d < HW + 1.8 || Math.hypot(x - POND.x, z - POND.z) < POND.r + 2) continue;
+    if (d < HW + 1.8 || pondDist(x, z) < POND.r + 2) continue;
     const y = groundAt(x, z);
     if (nt < TUFTS) {
       const s = .7 + rnd() * .8;
@@ -1278,22 +1403,24 @@ function buildWorld() {
       }
     }
   }
+  if (!nt) tufts.setColorAt(0, tint.set(0xffffff));
+  if (!nf) flowers.setColorAt(0, tint.set(0xffffff));
   tufts.count = nt; flowers.count = nf;
   for (const m of [tufts, flowers]) { m.receiveShadow = true; m.frustumCulled = false; w.add(m); }
 
-  // Far mountains
-  const rocks = lam({ color: 0x74808f, flatShading: true }), snow = lam({ color: 0xf1f4f8, flatShading: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-  for (let i = 0; i < 26; i++) {
-    const a = i / 26 * Math.PI * 2 + rnd() * .1, r = 620 + rnd() * 120, h = 90 + rnd() * 110, wide = 90 + rnd() * 90;
+  // Far mountains (bigger and snowier round the snow track). The city has its skyline instead.
+  const rocks = lam({ color: SNOW ? 0x8a96a6 : 0x74808f, flatShading: true }), snow = lam({ color: 0xf1f4f8, flatShading: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+  for (let i = 0; i < (CITY ? 0 : SNOW ? 32 : 26); i++) {
+    const a = i / (SNOW ? 32 : 26) * Math.PI * 2 + rnd() * .1, r = (SNOW ? 560 : 620) + rnd() * 120, h = (SNOW ? 150 : 90) + rnd() * (SNOW ? 160 : 110), wide = 90 + rnd() * 90;
     const m = new THREE.Mesh(new THREE.ConeGeometry(wide, h, 5 + (rnd() * 3 | 0)), rocks);
     m.position.set(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r); w.add(m);
     // The snow cap is a touch wider and taller than the rock under it, so the two never share a surface and flicker
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(wide * .335, h * .32, m.geometry.parameters.radialSegments), snow);
-    cap.position.set(m.position.x, h * .855 - 2, m.position.z); w.add(cap);
+    const cf = SNOW ? .55 : .32, cap = new THREE.Mesh(new THREE.ConeGeometry(wide * (cf + .015), h * cf, m.geometry.parameters.radialSegments), snow);
+    cap.position.set(m.position.x, h * (1 - cf / 2) + h * .015 - 2, m.position.z); w.add(cap);
   }
 
   // Sky dome, clouds, light
-  const sky = new THREE.SphereGeometry(1000, 24, 12), sp = sky.attributes.position, sc = [], top = new THREE.Color(0x2f86e0), hor = new THREE.Color(0xcfe9f7);
+  const sky = new THREE.SphereGeometry(1000, 24, 12), sp = sky.attributes.position, sc = [], top = new THREE.Color(LOOK.skyTop), hor = new THREE.Color(LOOK.skyHor);
   for (let i = 0; i < sp.count; i++) { c.copy(hor).lerp(top, Math.pow(clamp(sp.getY(i) / 450, 0, 1), .6)); sc.push(c.r, c.g, c.b); }
   sky.setAttribute('color', new THREE.Float32BufferAttribute(sc, 3));
   w.add(new THREE.Mesh(sky, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, toneMapped: false })));
@@ -1315,8 +1442,8 @@ function buildWorld() {
   }
   // Don't tile: with tiling, the blurrier copies phones use for far-away things mix in the opposite edge, drawing faint boxes round clouds
   puff.wrapS = puff.wrapT = THREE.ClampToEdgeWrapping;
-  const cloudMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: .9 });
-  for (let i = 0; i < 22; i++) {
+  const cloudMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: CITY ? .6 : .9 });
+  for (let i = 0; i < (SNOW ? 30 : CITY ? 12 : 22); i++) {
     const s = new THREE.Sprite(cloudMat);
     const a = rnd() * 6.3, r = 280 + rnd() * 460;
     s.position.set(Math.cos(a) * r, 110 + rnd() * 90, Math.sin(a) * r);
@@ -1350,25 +1477,54 @@ function buildWorld() {
     x.putImageData(im, 0, 0);
   });
   glowTex.wrapS = glowTex.wrapT = THREE.ClampToEdgeWrapping;
+  // At night the glow is the moon: a crisp pale disc with a faint halo
+  if (CITY) {
+    const x = glowTex.image.getContext('2d'), W = 128, im = x.createImageData(W, W), d = im.data;
+    for (let y = 0; y < W; y++) for (let xx = 0; xx < W; xx++) {
+      const t = Math.hypot(xx + .5 - W / 2, y + .5 - W / 2) / (W / 2), i = (y * W + xx) * 4, disc = 1 - smooth(.2, .23, t);
+      d[i] = 225 + 30 * disc; d[i + 1] = 232 + 23 * disc; d[i + 2] = 255;
+      d[i + 3] = 255 * Math.max(disc, .22 * (1 - smooth(.2, 1, t)));
+    }
+    x.putImageData(im, 0, 0);
+    glowTex.needsUpdate = true;
+  }
   const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, fog: false, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
-  sunGlow.scale.setScalar(260);
+  sunGlow.scale.setScalar(CITY ? 200 : 260);
   w.add(sunGlow);
-  w.fog = new THREE.Fog(0xcfe9f7, 180, 900);
+  w.fog = new THREE.Fog(LOOK.fog[0], LOOK.fog[1], LOOK.fog[2]);
+  // Stars over the city
+  if (CITY) {
+    const sPos = [];
+    for (let i = 0; i < 900; i++) {
+      const a = rnd() * Math.PI * 2, el = .12 + Math.pow(rnd(), .7) * 1.4;
+      sPos.push(Math.cos(a) * Math.cos(el) * 950, Math.sin(el) * 950, Math.sin(a) * Math.cos(el) * 950);
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(sPos, 3));
+    const stars = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 2, sizeAttenuation: false, fog: false, transparent: true, opacity: .85, toneMapped: false }));
+    stars.frustumCulled = false;
+    w.add(stars);
+  }
   // Shiny things (karts, water, chrome) reflect the blue sky and green fields rather than the garage
   {
-    const e = new THREE.Scene(), g = new THREE.SphereGeometry(20, 32, 16), ep = g.attributes.position, ec = [], field = new THREE.Color(0x4a8a35);
+    const e = new THREE.Scene(), g = new THREE.SphereGeometry(20, 32, 16), ep = g.attributes.position, ec = [], field = new THREE.Color(LOOK.field);
     for (let i = 0; i < ep.count; i++) { const t = ep.getY(i) / 20; t > 0 ? c.copy(hor).lerp(top, Math.pow(t, .6)) : c.copy(hor).lerp(field, Math.min(1, -t * 4)); ec.push(c.r, c.g, c.b); }
     g.setAttribute('color', new THREE.Float32BufferAttribute(ec, 3));
     e.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
-    const sp2 = new THREE.Mesh(new THREE.SphereGeometry(1.6, 12, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 5.6, 5) }));
+    const sp2 = new THREE.Mesh(new THREE.SphereGeometry(1.6, 12, 8), new THREE.MeshBasicMaterial({ color: CITY ? new THREE.Color(1.5, 1.6, 2) : new THREE.Color(6, 5.6, 5) }));
     sp2.position.set(55, 120, 40).setLength(17); e.add(sp2);
+    // City lights for the karts to catch in their paint
+    if (CITY) for (let i = 0; i < 40; i++) {
+      const a = rnd() * Math.PI * 2, l = new THREE.Mesh(new THREE.BoxGeometry(.6, .3 + rnd() * .8, .1), new THREE.MeshBasicMaterial({ color: new THREE.Color().setHSL([.08, .12, .85, .55][i % 4], .9, .6).multiplyScalar(2.5) }));
+      l.position.set(Math.cos(a) * 18, rnd() * 3, Math.sin(a) * 18); l.lookAt(0, 0, 0); e.add(l);
+    }
     const pm = new THREE.PMREMGenerator(renderer);
     w.environment = pm.fromScene(e, .02).texture;
     pm.dispose();
   }
-  const hemi = new THREE.HemisphereLight(0xdcefff, 0x5d7a44, .62);
+  const hemi = new THREE.HemisphereLight(LOOK.hemi[0], LOOK.hemi[1], LOOK.hemi[2]);
   w.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff1dc, 1.05);
+  const sun = new THREE.DirectionalLight(LOOK.sun[0], LOOK.sun[1]);
   sun.castShadow = true;
   sun.shadow.mapSize.set(SHADOW_SIZE, SHADOW_SIZE);
   Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 10, far: 240 });
@@ -1392,8 +1548,144 @@ function buildWorld() {
   rain.frustumCulled = false; rain.visible = false;
   w.add(rain);
 
+  // Snow track: falling flakes, always a few and more when the weather turns
+  let flakes = null;
+  if (SNOW) {
+    const n = TOUCH ? 1400 : 3500, pos = new Float32Array(n * 3).fill(-999), g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: .32, map: dot, color: 0xffffff, transparent: true, depthWrite: false, opacity: .95 }));
+    pts.frustumCulled = false;
+    w.add(pts);
+    flakes = { pts, pos, g, n };
+  }
+  if (SNOW) buildSnowmen(w, rnd, nearStand);
+  if (CITY) buildCity(w, rnd, nearStand, lam, size);
+
   buildRamps(w);
-  world = { scene: w, sun, sunGlow, ripple, padTex, skyMat, cloudMat, stormMat, storm, hemi, road, rain, dropPos, dropGeo, DROPS, wet: 0, bolt: 0, nextBolt: 6, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
+  const look = {
+    sky: new THREE.Color(1, 1, 1), skyStorm: new THREE.Color(...LOOK.skyStorm), cloud: new THREE.Color(...LOOK.cloud),
+    fog: new THREE.Color(LOOK.fog[0]), fogStorm: new THREE.Color(LOOK.fogStorm), fogNear: LOOK.fog[1], fogFar: LOOK.fog[2], sun: LOOK.sun[1], hemi: LOOK.hemi[2],
+  };
+  world = { track: TRACK_ID, look, flakes, scene: w, sun, sunGlow, ripple, padTex, skyMat, cloudMat, stormMat, storm, hemi, road, rain, dropPos, dropGeo, DROPS, wet: 0, bolt: 0, nextBolt: 6, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
+}
+
+// A few snowmen watching from beyond the wall
+function buildSnowmen(w, rnd, nearStand) {
+  const snowMat = new THREE.MeshLambertMaterial({ color: 0xf6f9fd }), coal = new THREE.MeshLambertMaterial({ color: 0x1b1c20 }), carrot = new THREE.MeshLambertMaterial({ color: 0xff7a1a });
+  const ball = new THREE.SphereGeometry(1, 14, 10), nose = new THREE.ConeGeometry(.12, .7, 8), eye = new THREE.SphereGeometry(.09, 6, 5);
+  const hat = new THREE.CylinderGeometry(.42, .42, .6, 12), brim = new THREE.CylinderGeometry(.62, .62, .06, 14);
+  for (let n = 0, tries = 0; n < 16 && tries < 400; tries++) {
+    const i = rnd() * N | 0, s = rnd() < .5 ? -1 : 1, off = WALL + 4 + rnd() * 6, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
+    if (nearestAny(x, z).d < WALL + 3 || nearStand(x, z) || (POND && Math.hypot(x - POND.x, z - POND.z) < POND.r + 6)) continue;
+    const g = new THREE.Group(), y = groundAt(x, z);
+    g.position.set(x, y, z);
+    g.rotation.y = Math.atan2(cx[i] - x, cz[i] - z);   // facing the road
+    g.scale.setScalar(.9 + rnd() * .4);
+    for (const [r, h] of [[1.25, 1], [.9, 2.75], [.62, 4.05]]) { const b = new THREE.Mesh(ball, snowMat); b.scale.setScalar(r); b.position.y = h; b.castShadow = true; g.add(b); }
+    const nz = new THREE.Mesh(nose, carrot); nz.rotation.x = Math.PI / 2; nz.position.set(0, 4.05, .85); g.add(nz);
+    for (const ex of [-.22, .22]) { const e = new THREE.Mesh(eye, coal); e.position.set(ex, 4.25, .55); g.add(e); }
+    for (const by of [2.55, 2.95, 3.3]) { const b = new THREE.Mesh(eye, coal); b.position.set(0, by, .87); g.add(b); }
+    const h1 = new THREE.Mesh(hat, coal); h1.position.y = 4.85; g.add(h1);
+    const h2 = new THREE.Mesh(brim, coal); h2.position.y = 4.57; g.add(h2);
+    w.add(g);
+    n++;
+  }
+}
+
+// Night city: blocks of buildings with lit windows, a far skyline, and street lights that throw pools of light on the road
+function buildCity(w, rnd, nearStand, lam, size) {
+  // One window texture: dark facade, some windows lit warm or cool. A second copy with only the lit windows makes them glow.
+  const COLS = 8, wins = [];
+  for (let a = 0; a < COLS; a++) for (let b = 0; b < COLS; b++) wins.push(rnd() < .42 ? (rnd() < .7 ? '#ffd27a' : rnd() < .6 ? '#bfe4ff' : '#ff8fd8') : null);
+  const draw = lit => (x, W, H) => {
+    const cs = W / COLS;
+    x.fillStyle = lit ? '#000' : '#262833'; x.fillRect(0, 0, W, H);
+    wins.forEach((col, n) => {
+      const a = n % COLS, b = n / COLS | 0;
+      if (lit && !col) return;
+      x.fillStyle = col || '#151821'; x.fillRect(a * cs + 12, b * cs + 14, cs - 24, cs - 26);
+    });
+  };
+  const facade = canvasTex(512, 512, draw(false)), glow = canvasTex(512, 512, draw(true));
+  const mat = lam({ map: facade, emissive: 0xffffff, emissiveMap: glow, vertexColors: true });
+  const pos = [], nor = [], uv = [], col = [], idx = [], tint = new THREE.Color();
+  const TILE = 32;   // metres of wall one copy of the texture covers
+  const add = (x, z, y0, wd, dp, h, rot) => {
+    const g = new THREE.BoxGeometry(wd, h, dp);
+    g.rotateY(rot); g.translate(x, y0 + h / 2, z);
+    const p = g.attributes.position, nn = g.attributes.normal, u = g.attributes.uv, base = pos.length / 3;
+    tint.setHSL(.6 + rnd() * .15, .12 + rnd() * .12, .55 + rnd() * .35);
+    for (let v = 0; v < p.count; v++) {
+      const face = v / 4 | 0, fw = face < 2 ? dp : wd;   // faces: +x, -x, top, bottom, +z, -z
+      pos.push(p.getX(v), p.getY(v), p.getZ(v)); nor.push(nn.getX(v), nn.getY(v), nn.getZ(v));
+      if (face === 2 || face === 3) uv.push(.004, .004); else uv.push(u.getX(v) * fw / TILE, u.getY(v) * h / TILE);
+      col.push(tint.r, tint.g, tint.b);
+    }
+    for (const i of g.index.array) idx.push(base + i);
+    g.dispose();
+  };
+  const clear = (x, z, r) => {
+    for (const [ox, oz] of [[0, 0], [r, r], [-r, r], [r, -r], [-r, -r], [r, 0], [-r, 0], [0, r], [0, -r]]) if (nearestAny(x + ox, z + oz).d < WALL + 5 || nearStand(x + ox, z + oz)) return false;
+    return true;
+  };
+  // City blocks on a grid around (and inside) the circuit
+  const STEP = 30, LIM = 420;
+  for (let gx = -LIM; gx <= LIM; gx += STEP) for (let gz = -LIM; gz <= LIM; gz += STEP) {
+    if (rnd() < .12) continue;
+    const wd = 14 + rnd() * 12, dp = 14 + rnd() * 12, x = gx + (rnd() - .5) * 6, z = gz + (rnd() - .5) * 6;
+    if (!clear(x, z, Math.max(wd, dp) * .72)) continue;
+    const far = Math.max(Math.abs(x), Math.abs(z)), y0 = far < size / 2 ? groundAt(x, z) - .5 : -1.6;
+    add(x, z, y0, wd, dp, 16 + Math.pow(rnd(), 1.6) * (far > 300 ? 120 : 70), 0);
+  }
+  // A ring of towers on the horizon
+  for (let i = 0; i < 90; i++) {
+    const a = i / 90 * Math.PI * 2 + rnd() * .05, r = 560 + rnd() * 160, wd = 30 + rnd() * 30;
+    add(Math.cos(a) * r, Math.sin(a) * r, -2, wd, wd, 60 + Math.pow(rnd(), 1.4) * 200, -a);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  const city = new THREE.Mesh(g, mat);
+  city.castShadow = city.receiveShadow = true;
+  city.frustumCulled = false;
+  w.add(city);
+
+  // Street lights: poles on both sides of the road, a bright head, a halo, and a warm pool of light on the tarmac
+  const spots = [];
+  for (let i = 0, side = 1; i < N; i += 26, side = -side) spots.push([i, side]);
+  const n = spots.length, m4 = new THREE.Object3D();
+  const steel = lam({ color: 0x3a3d48 });
+  const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(.16, .22, 8, 8), steel, n);
+  const arms = new THREE.InstancedMesh(new THREE.BoxGeometry(.18, .18, 3.2), steel, n);
+  const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(.5, .2, 1.3), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.35, .9), toneMapped: false }), n);
+  const poolTex = canvasTex(128, 128, (x, W) => {
+    const im = x.createImageData(W, W), d = im.data;
+    for (let y = 0; y < W; y++) for (let xx = 0; xx < W; xx++) {
+      const t = Math.min(1, Math.hypot(xx + .5 - W / 2, y + .5 - W / 2) / (W / 2)), a = Math.pow(1 - t, 1.8), i = (y * W + xx) * 4;
+      d[i] = 255; d[i + 1] = 200; d[i + 2] = 130; d[i + 3] = 255 * a;
+    }
+    x.putImageData(im, 0, 0);
+  });
+  poolTex.wrapS = poolTex.wrapT = THREE.ClampToEdgeWrapping;
+  const pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: poolTex, transparent: true, opacity: .55, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), n);
+  const haloMat = new THREE.SpriteMaterial({ map: poolTex, color: 0xffe0b0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: .8 });
+  spots.forEach(([i, s], k) => {
+    const lat = s * (HW + 2.4), x = cx[i] + nxOf(i) * lat, z = cz[i] + nzOf(i) * lat, y = cy[i], face = Math.atan2(-nxOf(i) * s, -nzOf(i) * s);
+    m4.rotation.set(0, face, 0); m4.scale.setScalar(1);
+    m4.position.set(x, y + 3.8, z); m4.updateMatrix(); poles.setMatrixAt(k, m4.matrix);
+    const hx = x - nxOf(i) * s * 1.5, hz = z - nzOf(i) * s * 1.5;
+    m4.position.set(hx, y + 7.7, hz); m4.updateMatrix(); arms.setMatrixAt(k, m4.matrix);
+    const lx = x - nxOf(i) * s * 2.9, lz = z - nzOf(i) * s * 2.9;
+    m4.position.set(lx, y + 7.55, lz); m4.updateMatrix(); heads.setMatrixAt(k, m4.matrix);
+    m4.rotation.set(0, 0, 0); m4.scale.set(17, 1, 17);
+    m4.position.set(x - nxOf(i) * s * 6, y + .06, z - nzOf(i) * s * 6); m4.updateMatrix(); pools.setMatrixAt(k, m4.matrix);
+    const halo = new THREE.Sprite(haloMat); halo.position.set(lx, y + 7.3, lz); halo.scale.setScalar(4.5); w.add(halo);
+  });
+  poles.castShadow = arms.castShadow = true;
+  for (const m of [poles, arms, heads, pools]) { m.frustumCulled = false; w.add(m); }
 }
 
 function buildRamps(w) {
@@ -1431,7 +1723,7 @@ function buildRamps(w) {
 // ---------- Lucky blocks and items ----------
 // Rows of spinning ? blocks across the road. Drive through one and a roulette picks a random ability for you.
 // Racers near the back get the strong stuff, the leader mostly gets defensive items.
-const BLOCK_ROWS = [150, 420, 700, 975], BLOCK_LATS = [-6, -2, 2, 6], SPIN = 1.1, ROLL = 1.1;
+const BLOCK_LATS = [-6, -2, 2, 6], SPIN = 1.1, ROLL = 1.1;
 const ITEMS = {
   turbo: { icon: '💨', name: 'Turbo', uses: 1 },
   triple: { icon: '💨', name: 'Triple turbo', uses: 3 },
@@ -1738,7 +2030,12 @@ function onlineGrid(plan) {
 
 function startRace(plan) {
   document.activeElement?.blur();
-  if (!world) buildWorld();
+  const trackId = plan ? plan.track : gp ? GP_TRACKS[gp.round] : state.track;
+  if (!world || world.track !== trackId) {
+    disposeWorld();
+    loadTrack(trackId);
+    buildWorld();
+  }
   document.body.classList.add('racing');
   $('overlay').className = '';
   const karts = plan ? onlineGrid(plan) : soloGrid(), you = karts.find(k => k.isPlayer);
@@ -1751,7 +2048,13 @@ function startRace(plan) {
   race = {
     karts, you, online: !!plan, waiting: !!plan, goAt: 0, t: -3.6, over: false, paused: false, shownAt: 0, camYaw: you.yaw, camX: 0, camY: 0, camZ: 0, lastBeep: 4, lapShown: 1, doneT: 0,
     laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, weather: plan ? plan.weather || 'sunny' : state.weather, rainT: 0, fx: [], shake: 0, place: 0, itemShown: null,
+    gp: !plan && !!gp,
   };
+  // Track name on the way in, and which race of the cup this is
+  $('banner').innerHTML = `${TRACK.icon} ${TRACK.name}${race.gp ? `<div style="font-size:.55em">Grand Prix · race ${gp.round + 1} of ${GP_TRACKS.length}</div>` : ''}`;
+  $('banner').className = 'on';
+  clearTimeout(trackBannerTimer);
+  trackBannerTimer = setTimeout(() => { if (race && !race.waiting && race.lapShown === 1) $('banner').className = ''; }, 2800);
   for (const b of world.blocks) { b.down = 0; b.grow = 1; }
   $('item').hidden = $('item2').hidden = !race.items;
   $('itemBtn').hidden = !race.items;
@@ -1765,6 +2068,7 @@ function startRace(plan) {
   stepRace(0);
 }
 
+let trackBannerTimer = 0;
 function leaveRace() {
   if (race) {
     for (const k of race.karts) { world.scene.remove(k.view.group); k.bubble.material.dispose(); k.view.dispose(); }
@@ -2079,10 +2383,33 @@ function drawResults() {
   }).join('');
   const laps = race.you.laps, best = laps.length ? Math.min(...laps) : null;
   const bestLine = best !== null ? `<p class="best">Your best lap: ${fmtTime(best)}${laps.length > 1 ? ` &nbsp;·&nbsp; ${laps.map(fmtTime).join(' / ')}` : ''}</p>` : '';
-  $('overlayBody').innerHTML = `<h3>${MEDALS[place - 1] || ''} ${head}</h3>${bestLine}<table>${rows}</table>`;
+  $('overlayBody').innerHTML = `<h3>${MEDALS[place - 1] || ''} ${head}</h3>${bestLine}<table>${rows}</table>${race.gp ? gpTable() : ''}`;
   $('resume').hidden = true;
   $('again').hidden = race.online && !net.host;
+  $('again').textContent = !race.gp ? 'Race again' : gp.round + 1 < GP_TRACKS.length ? `Next race: ${TRACKS[GP_TRACKS[gp.round + 1]].icon} ${TRACKS[GP_TRACKS[gp.round + 1]].name}` : 'New Grand Prix';
   setQuitLabel();
+}
+
+// ---------- Grand Prix ----------
+// All three tracks in a row. Points for every finishing place; the most points after the last race wins the cup.
+const GP_TRACKS = ['meadow', 'snow', 'city'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
+let gp = null;
+// Totals including this race. Karts still driving are counted in the place they're in now.
+function gpTotals() {
+  const order = ranking(), tot = order.map((k, i) => ({ k, add: GP_POINTS[i] || 0, pts: (gp.pts[k.name] || 0) + (GP_POINTS[i] || 0) }));
+  return tot.sort((a, b) => b.pts - a.pts || order.indexOf(a.k) - order.indexOf(b.k));
+}
+function gpTable() {
+  const last = gp.round + 1 >= GP_TRACKS.length, tot = gpTotals(), me = tot.findIndex(t => t.k.isPlayer) + 1;
+  const head = !last ? `Standings after race ${gp.round + 1} of ${GP_TRACKS.length}`
+    : me === 1 ? '🏆 You won the Grand Prix!' : me <= 3 ? `🏆 ${ordinal(me)} in the Grand Prix!` : `You finished ${ordinal(me)} in the Grand Prix`;
+  const rows = tot.map((t, i) => `<tr class="${t.k.isPlayer ? 'me' : ''}"><td>${last ? MEDALS[i] || i + 1 : i + 1}</td><td>${esc(t.k.name)}</td><td>+${t.add}</td><td>${t.pts} pts</td></tr>`).join('');
+  return `<p class="gpHead">${head}</p><table>${rows}</table>`;
+}
+function gpNext() {
+  for (const t of gpTotals()) gp.pts[t.k.name] = t.pts;
+  gp.round++;
+  if (gp.round >= GP_TRACKS.length) gp = { round: 0, pts: {} };
 }
 
 function setQuitLabel() {
@@ -2102,6 +2429,7 @@ function togglePause() {
   }
   race.paused = !race.paused;
   $('again').hidden = false;
+  $('again').textContent = race.gp ? 'Restart this race' : 'Race again';
   setQuitLabel();
   $('overlay').className = race.paused ? 'show' : '';
   $('overlayBody').innerHTML = '<h3>Paused</h3>';
@@ -2111,8 +2439,12 @@ function togglePause() {
 
 // HUD
 let mapBase = null;
-const mapScale = 190 / 420, mapX = x => 95 + x * mapScale, mapY = z => 95 + z * mapScale;
+let mapScale = 190 / 420, mapCX = 0, mapCZ = 0;
+const mapX = x => 95 + (x - mapCX) * mapScale, mapY = z => 95 + (z - mapCZ) * mapScale;
 function drawMapBase() {
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+  for (let i = 0; i < N; i++) { x0 = Math.min(x0, cx[i]); x1 = Math.max(x1, cx[i]); z0 = Math.min(z0, cz[i]); z1 = Math.max(z1, cz[i]); }
+  mapCX = (x0 + x1) / 2; mapCZ = (z0 + z1) / 2; mapScale = 172 / Math.max(x1 - x0, z1 - z0);
   mapBase = document.createElement('canvas');
   mapBase.width = mapBase.height = 190;
   const x = mapBase.getContext('2d');
@@ -2251,9 +2583,13 @@ function placeRaceCam(dt) {
 // ---------- Weather ----------
 // world.wet slides towards the chosen weather (or rain, for a while after a zap) and everything follows it:
 // darker sky and clouds, thicker fog, dimmer sun, a shiny wet road, rain, and in a thunderstorm, lightning.
-const SKY_CLEAR = new THREE.Color(1, 1, 1), SKY_STORM = new THREE.Color(.36, .39, .45), FOG_CLEAR = new THREE.Color(0xcfe9f7), FOG_STORM = new THREE.Color(0x5f6874);
 function seedRain() {
   const c = raceCam.position;
+  if (world.flakes) {
+    const f = world.flakes;
+    for (let i = 0; i < f.n; i++) { f.pos[i * 3] = c.x + (Math.random() - .5) * 70; f.pos[i * 3 + 1] = c.y + Math.random() * 30 - 6; f.pos[i * 3 + 2] = c.z + (Math.random() - .5) * 70; }
+    f.g.attributes.position.needsUpdate = true;
+  }
   for (let i = 0; i < world.DROPS; i++) placeDrop(i, c.x + (Math.random() - .5) * 70, c.y + Math.random() * 40 - 8, c.z + (Math.random() - .5) * 70);
   world.dropGeo.attributes.position.needsUpdate = true;
 }
@@ -2276,18 +2612,34 @@ function stepWeather(dt) {
     flash('bolt');
     sound.thunder(.6 + Math.random() * 1.4);
   }
-  W.skyMat.color.copy(SKY_CLEAR).lerp(SKY_STORM, dark);
-  W.cloudMat.color.copy(SKY_CLEAR).lerp(SKY_STORM, dark * .8);
+  const L = W.look, storm = Math.max(0, wet - .6) / .4;
+  W.skyMat.color.copy(L.sky).lerp(L.skyStorm, dark);
+  W.cloudMat.color.copy(L.cloud).lerp(L.skyStorm, dark * .8);
   W.stormMat.opacity = Math.min(1, dark * 1.3);
   W.storm.visible = dark > .01;
   W.storm.position.set(raceCam.position.x, 0, raceCam.position.z);
-  W.scene.fog.color.copy(FOG_CLEAR).lerp(FOG_STORM, dark);
-  W.scene.fog.near = 180 - 130 * dark; W.scene.fog.far = 900 - 560 * dark;
-  W.sun.intensity = 1.05 - (.6 + .3 * Math.max(0, wet - .6) / .4) * dark + W.bolt * 1.4;
-  W.hemi.intensity = .62 - (.15 + .22 * Math.max(0, wet - .6) / .4) * dark + W.bolt * 1.1;
+  W.scene.fog.color.copy(L.fog).lerp(L.fogStorm, dark);
+  W.scene.fog.near = L.fogNear * (1 - .72 * dark); W.scene.fog.far = L.fogFar * (1 - .62 * dark);
+  W.sun.intensity = L.sun * (1 - (.57 + .29 * storm) * dark) + W.bolt * 1.4;
+  W.hemi.intensity = L.hemi * (1 - (.24 + .35 * storm) * dark) + W.bolt * 1.1;
   W.sunGlow.material.opacity = 1 - dark;
   W.road.roughness = .9 - .55 * dark;
   W.road.envMapIntensity = .4 + .5 * dark;
+  // Snow falls quietly instead of rain: a light flurry always, a blizzard in a storm
+  if (W.flakes) {
+    sound.rain(0);
+    W.rain.visible = false;
+    const f = W.flakes, n = Math.round(f.n * (.3 + .7 * Math.min(1, wet / .6))), c = raceCam.position, fall = (3 + wet * 5) * dt, side = (1 + wet * 9) * dt, t = performance.now() / 1000;
+    f.g.setDrawRange(0, n);
+    for (let i = 0; i < n; i++) {
+      const o = i * 3;
+      let x = f.pos[o] + side + Math.sin(t * 1.3 + i) * .6 * dt, y = f.pos[o + 1] - fall * (.7 + (i % 5) * .12), z = f.pos[o + 2] + Math.cos(t + i * .7) * .5 * dt;
+      if (y < c.y - 8 || Math.abs(x - c.x) > 36 || Math.abs(z - c.z) > 36) { x = c.x + (Math.random() - .5) * 70; y = y < c.y - 8 ? c.y + 22 + Math.random() * 6 : c.y + Math.random() * 28 - 6; z = c.z + (Math.random() - .5) * 70; }
+      f.pos[o] = x; f.pos[o + 1] = y; f.pos[o + 2] = z;
+    }
+    f.g.attributes.position.needsUpdate = true;
+    return;
+  }
   sound.rain(wet);
   // Rain falls straight-ish, a touch slanted in a storm, and wraps around the camera
   const n = Math.round(W.DROPS * Math.min(1, wet / .6) * (wet > .6 ? 1 : .55));
@@ -2560,6 +2912,28 @@ LAP_CHOICES.forEach(n => {
   btn.onclick = () => { state.laps = n; saveRaceOptions(); document.querySelectorAll('#laps button').forEach(b => b.setAttribute('aria-pressed', b === btn)); };
   $('laps').append(btn);
 });
+const MODES = { race: 'Single race', gp: '🏆 Grand Prix' };
+function drawTrackPicker() {
+  const inRoom = !!net.room, cup = state.mode === 'gp' && !inRoom;
+  document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.mode));
+  document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !cup && b.dataset.id === state.track); b.disabled = cup; b.style.opacity = cup ? .55 : ''; });
+  $('gpNote').hidden = !cup;
+  $('modeNote').hidden = !(inRoom && state.mode === 'gp');
+}
+Object.entries(MODES).forEach(([key, label]) => {
+  const btn = document.createElement('button');
+  btn.textContent = label; btn.dataset.id = key;
+  btn.onclick = () => { state.mode = key; saveRaceOptions(); drawRoom(); };
+  $('modes').append(btn);
+});
+Object.entries(TRACKS).forEach(([id, t]) => {
+  const btn = document.createElement('button');
+  btn.className = 'body'; btn.dataset.id = id;
+  btn.innerHTML = `<b>${t.icon} ${t.name}</b><small>${t.blurb}</small>`;
+  btn.onclick = () => { state.track = id; saveRaceOptions(); drawRoom(); };
+  $('tracks').append(btn);
+});
+drawTrackPicker();
 Object.entries(WEATHERS).forEach(([key, w]) => {
   const btn = document.createElement('button');
   btn.textContent = w.label;
@@ -2574,14 +2948,22 @@ $('musicBox').onchange = () => {
   state.music = $('musicBox').checked; saveRaceOptions();
   if (!state.music) sound.stopMusic(); else if (race && race.t > 0 && !race.over) sound.startMusic();
 };
-$('start').onclick = () => { goFullscreen(); if (!net.room) startRace(); else if (net.host) netStartRace(); };
+$('start').onclick = () => {
+  goFullscreen();
+  if (!net.room) { gp = state.mode === 'gp' ? { round: 0, pts: {} } : null; startRace(); }
+  else if (net.host) netStartRace();
+};
 $('resume').onclick = togglePause;
 $('again').onclick = () => {
   if (race?.online) netStartRace();
-  else { leaveRace(); startRace(); }
+  else {
+    if (race?.gp && race.over) gpNext();
+    leaveRace(); startRace();
+  }
 };
 $('quit').onclick = () => {
   try { screen.orientation?.unlock?.(); } catch (e) {}
+  gp = null;
   if (!race?.online) leaveRace();
   else if (net.host) { netBroadcast({ t: 'end' }); leaveRace(); netMessage(''); }
   else { netToHost({ t: 'left' }); leaveRace(); netMessage('Waiting for the next race'); }
@@ -2623,12 +3005,13 @@ function netBroadcast(msg, except) {
 
 function drawRoom() {
   const inRoom = !!net.room;
+  drawTrackPicker();
   $('netMenu').hidden = inRoom;
   $('netRoom').hidden = !inRoom;
   $('netCpuRow').hidden = !net.host;
   $('hostNote').hidden = !inRoom || net.host;
   $('start').disabled = inRoom && !net.host;
-  $('start').textContent = !inRoom ? 'Start race' : net.host ? `Start race (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
+  $('start').textContent = !inRoom ? (state.mode === 'gp' ? 'Start Grand Prix' : 'Start race') : net.host ? `Start race (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
   if (!inRoom) return;
   $('netCodeShow').textContent = net.room.toUpperCase();
   $('netPlayers').innerHTML = net.players.map((p, i) => `<li>${esc(p.name)} <small>${BODIES[p.body].name}${i === 0 ? ', host' : ''}${p.id === net.me ? ', you' : ''}</small></li>`).join('');
@@ -2981,7 +3364,7 @@ function onGuestData(d, code) {
     case 'start': {
       const racers = Array.isArray(d.racers) ? d.racers.slice(0, MAX_PLAYERS).map(cleanPlayer) : [];
       if (!racers.some(p => p.id === net.me)) break;
-      netBegin({ racers, laps: LAP_CHOICES.includes(d.laps) ? d.laps : 3, items: d.items !== false, weather: WEATHERS[d.weather] ? d.weather : 'sunny' });
+      netBegin({ racers, laps: LAP_CHOICES.includes(d.laps) ? d.laps : 3, items: d.items !== false, weather: WEATHERS[d.weather] ? d.weather : 'sunny', track: TRACKS[d.track] ? d.track : 'meadow' });
       netToHost({ t: 'ready' });
       break;
     }
@@ -3013,9 +3396,9 @@ function netStartRace() {
     for (let i = 0; i < MAX_PLAYERS - net.players.length; i++) cpus.push(cleanPlayer({ id: 'cpu' + i, name: CPU_NAMES[i], body: ids[i % 3], paint: paints[i % paints.length], number: 11 + i * 7, cpu: true }));
   }
   // Friends start at the back, like you do against the CPUs
-  const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather;
-  netBroadcast({ t: 'start', racers, laps, items, weather });
-  netBegin({ racers, level, laps, items, weather });
+  const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather, track = state.track;
+  netBroadcast({ t: 'start', racers, laps, items, weather, track });
+  netBegin({ racers, level, laps, items, weather, track });
   net.ready = new Set([net.me]);
   clearTimeout(net.goTimer);
   net.goTimer = setTimeout(netGoAll, READY_WAIT);
