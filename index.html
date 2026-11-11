@@ -823,6 +823,7 @@ el.addEventListener('wheel', e => {
 const q = new URLSearchParams(location.search);
 // How wet each weather is: 0 is clear sky, 1 is a full thunderstorm
 const WEATHERS = { sunny: { label: '☀️ Sunny', wet: 0 }, rainy: { label: '🌧️ Rainy', wet: .6 }, thunder: { label: '⛈️ Thunder', wet: 1 } };
+const SNOW_WEATHER = { sunny: '☀️ Sunny', rainy: '🌨️ Snowy', thunder: '❄️ Heavy snow' };
 const ZAP_RAIN = 9;   // seconds of rain after someone uses a zap
 const state = {
   body: BODIES[q.get('body')] ? q.get('body') : 'sprint',
@@ -2606,7 +2607,7 @@ function stepWeather(dt) {
   const wet = W.wet, dark = Math.min(1, wet / .6) * .75 + Math.max(0, wet - .6) / .4 * .25;
   // Lightning: only in a proper storm
   W.bolt = Math.max(0, W.bolt - dt * 3);
-  if (wet > .85 && dt > 0 && (W.nextBolt -= dt) <= 0) {
+  if (wet > .85 && !W.flakes && dt > 0 && (W.nextBolt -= dt) <= 0) {
     W.nextBolt = 5 + Math.random() * 8;
     W.bolt = 1;
     flash('bolt');
@@ -2629,7 +2630,7 @@ function stepWeather(dt) {
   if (W.flakes) {
     sound.rain(0);
     W.rain.visible = false;
-    const f = W.flakes, n = Math.round(f.n * (.3 + .7 * Math.min(1, wet / .6))), c = raceCam.position, fall = (3 + wet * 5) * dt, side = (1 + wet * 9) * dt, t = performance.now() / 1000;
+    const f = W.flakes, n = Math.round(f.n * (wet <= .6 ? .15 + .4 * wet / .6 : .55 + .45 * (wet - .6) / .4)), c = raceCam.position, fall = (3 + wet * 7) * dt, side = (1 + wet * 12) * dt, t = performance.now() / 1000;
     f.g.setDrawRange(0, n);
     for (let i = 0; i < n; i++) {
       const o = i * 3;
@@ -2919,6 +2920,9 @@ function drawTrackPicker() {
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !cup && b.dataset.id === state.track); b.disabled = cup; b.style.opacity = cup ? .55 : ''; });
   $('gpNote').hidden = !cup;
   $('modeNote').hidden = !(inRoom && state.mode === 'gp');
+  // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow
+  const snowy = !cup && TRACKS[state.track].theme === 'snow';
+  document.querySelectorAll('#weather button').forEach(b => { b.textContent = snowy ? SNOW_WEATHER[b.dataset.id] : WEATHERS[b.dataset.id].label; });
 }
 Object.entries(MODES).forEach(([key, label]) => {
   const btn = document.createElement('button');
@@ -2936,7 +2940,7 @@ Object.entries(TRACKS).forEach(([id, t]) => {
 drawTrackPicker();
 Object.entries(WEATHERS).forEach(([key, w]) => {
   const btn = document.createElement('button');
-  btn.textContent = w.label;
+  btn.textContent = w.label; btn.dataset.id = key;
   btn.setAttribute('aria-pressed', state.weather === key);
   btn.onclick = () => { state.weather = key; saveRaceOptions(); document.querySelectorAll('#weather button').forEach(b => b.setAttribute('aria-pressed', b === btn)); };
   $('weather').append(btn);
