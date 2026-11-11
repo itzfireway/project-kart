@@ -2126,7 +2126,7 @@ function onlineGrid(plan) {
 
 function startRace(plan) {
   document.activeElement?.blur();
-  const trackId = plan ? plan.track : gp ? GP_TRACKS[gp.round] : state.track;
+  const trackId = plan ? plan.track : gp ? gp.order[gp.round] : state.track;
   if (!world || world.track !== trackId) {
     disposeWorld();
     loadTrack(trackId);
@@ -2145,7 +2145,7 @@ function startRace(plan) {
     karts, you, online: !!plan, waiting: !!plan, goAt: 0, t: -3.6, over: false, paused: false, shownAt: 0, camYaw: you.yaw, camX: 0, camY: 0, camZ: 0, lastBeep: 4, lapShown: 1, doneT: 0,
     laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, weather: plan ? plan.weather || 'sunny' : state.weather, rainT: 0, fx: [], shake: 0, place: 0, itemShown: null,
     // Grand Prix round and points so far, from your own cup or from the host's
-    gp: plan ? plan.gp || null : gp ? { round: gp.round, pts: gp.pts } : null,
+    gp: plan ? plan.gp || null : gp ? { round: gp.round, pts: gp.pts, order: gp.order } : null,
   };
   // Track name on the way in, and which race of the cup this is
   $('banner').innerHTML = `${TRACK.icon} ${TRACK.name}${race.gp ? `<div style="font-size:.55em">Grand Prix · race ${race.gp.round + 1} of ${GP_TRACKS.length}</div>` : ''}`;
@@ -2483,15 +2483,21 @@ function drawResults() {
   $('overlayBody').innerHTML = `<h3>${MEDALS[place - 1] || ''} ${head}</h3>${bestLine}<table>${rows}</table>${race.gp ? gpTable() : ''}`;
   $('resume').hidden = true;
   $('again').hidden = race.online && !net.host;
-  const nextGp = race.gp && race.gp.round + 1 < GP_TRACKS.length ? TRACKS[GP_TRACKS[race.gp.round + 1]] : null;
+  const nextGp = race.gp && race.gp.round + 1 < GP_TRACKS.length ? TRACKS[race.gp.order[race.gp.round + 1]] : null;
   $('again').textContent = !race.gp ? 'Race again' : nextGp ? `Next race: ${nextGp.icon} ${nextGp.name}` : 'New Grand Prix';
   setQuitLabel();
 }
 
 // ---------- Grand Prix ----------
 // All three tracks in a row. Points for every finishing place; the most points after the last race wins the cup.
+// Solo cups always go Meadow, Snow, City. In a room the host shuffles the tracks for every new cup, so nobody picks.
 const GP_TRACKS = ['meadow', 'snow', 'city'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
 let gp = null;
+function newGp() {
+  const order = [...GP_TRACKS];
+  if (net.room) for (let i = order.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [order[i], order[j]] = [order[j], order[i]]; }
+  return { round: 0, pts: {}, order };
+}
 // Totals including this race. Karts still driving are counted in the place they're in now.
 // Online, racers are known by their id so two friends with the same name don't share points
 const gpKey = k => k.id ?? k.name;
@@ -2514,7 +2520,7 @@ function gpNext() {
   for (const t of gpTotals()) pts[gpKey(t.k)] = t.pts;
   gp.pts = pts;
   gp.round++;
-  if (gp.round >= GP_TRACKS.length) gp = { round: 0, pts: {} };
+  if (gp.round >= GP_TRACKS.length) gp = newGp();
 }
 
 function setQuitLabel() {
@@ -3027,10 +3033,12 @@ LAP_CHOICES.forEach(n => {
 });
 const MODES = { race: 'Single race', gp: '🏆 Grand Prix' };
 function drawTrackPicker() {
-  const inRoom = !!net.room, cup = state.mode === 'gp';
+  const inRoom = !!net.room, cup = state.mode === 'gp', guest = inRoom && !net.host, locked = cup || guest;
   document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.mode));
-  document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !cup && b.dataset.id === state.track); b.disabled = cup; b.style.opacity = cup ? .55 : ''; });
-  $('gpNote').hidden = !cup;
+  document.querySelectorAll('#modes button').forEach(b => { b.disabled = guest; b.style.opacity = guest ? .55 : ''; });
+  document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !locked && b.dataset.id === state.track); b.disabled = locked; b.style.opacity = locked ? .55 : ''; });
+  $('gpNote').hidden = !cup || guest;
+  $('gpNote').textContent = `Race all three tracks${inRoom ? ' in a random order, picked fresh for every cup' : ' in a row'}. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
   // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow
   const snowy = !cup && TRACKS[state.track].theme === 'snow';
   document.querySelectorAll('#weather button').forEach(b => { b.textContent = snowy ? SNOW_WEATHER[b.dataset.id] : WEATHERS[b.dataset.id].label; });
@@ -3065,7 +3073,7 @@ $('musicBox').onchange = () => {
 };
 $('start').onclick = () => {
   goFullscreen();
-  gp = state.mode === 'gp' ? { round: 0, pts: {} } : null;
+  gp = state.mode === 'gp' ? newGp() : null;
   if (!net.room) startRace();
   else if (net.host) netStartRace();
 };
@@ -3514,7 +3522,7 @@ function netStartRace() {
   // Friends start at the back, like you do against the CPUs
   const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather;
   // In a Grand Prix the host picks the track for this round, and tells everyone the points so far
-  const track = gp ? GP_TRACKS[gp.round] : state.track, cup = gp ? { round: gp.round, pts: gp.pts } : null;
+  const track = gp ? gp.order[gp.round] : state.track, cup = gp ? { round: gp.round, pts: gp.pts, order: gp.order } : null;
   netBroadcast({ t: 'start', racers, laps, items, weather, track, gp: cup });
   netBegin({ racers, level, laps, items, weather, track, gp: cup });
   net.ready = new Set([net.me]);
@@ -3524,9 +3532,10 @@ function netStartRace() {
 }
 function cleanGp(g, racers) {
   if (!g || typeof g !== 'object' || ![0, 1, 2].includes(g.round)) return null;
+  const order = Array.isArray(g.order) && g.order.length === GP_TRACKS.length && GP_TRACKS.every(t => g.order.includes(t)) ? [...g.order] : [...GP_TRACKS];
   const pts = {};
   for (const p of racers) { const v = +g.pts?.[p.id]; if (Number.isFinite(v)) pts[p.id] = clamp(Math.round(v), 0, 999); }
-  return { round: g.round, pts };
+  return { round: g.round, pts, order };
 }
 function netBegin(plan) {
   if (race) leaveRace();
