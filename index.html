@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-11.2';
+const BUILD = '2026-11-11.3';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -3377,7 +3377,7 @@ function netJoin(tries = 0) {
       net.up = conn;
       conn.on('data', d => { if (net.up === conn) onGuestData(d, code); });
       conn.on('close', () => { if (net.up === conn && net.room) netReset('The host left the room'); });
-      conn.send({ t: 'join', ...myProfile() });
+      conn.send({ t: 'join', ...myProfile(), build: BUILD });
     };
     const direct = net.peer.connect(ROOM_PREFIX + code, { reliable: true });
     let viaRelay = null;
@@ -3394,7 +3394,7 @@ function netJoin(tries = 0) {
         if (relay?.failed) { clearInterval(knock); netMessage('Could not load online play. Turn off any ad or content blocker and refresh'); return; }
         if (secs > 60) { clearInterval(knock); netMessage(relayUp() ? 'The host is not answering. Make sure the host has the game open on screen, then press Join again' : 'Could not reach the relay servers, check your internet'); return; }
         if (relayUp()) {
-          viaRelay.send({ t: 'join', ...myProfile() });   // the host ignores repeats
+          viaRelay.send({ t: 'join', ...myProfile(), build: BUILD });   // the host ignores repeats
           if (secs > 8) netMessage('Waiting for the host… keep the game open on the host\'s screen');
         } else if (secs > 10) netMessage('Still trying to reach the relay servers…');
       }, 2000);
@@ -3409,6 +3409,17 @@ function netJoin(tries = 0) {
     if (e?.type === 'peer-unavailable' && tries < 20) { netMessage(tries < 3 ? 'Looking for the room…' : 'Waiting for the host to come back to the game…'); const peer = net.peer; setTimeout(() => { if (net.peer === peer && !net.room) netJoin(tries + 1); }, 2500); return; }
     netMessage(peerProblem(e));
   });
+}
+
+// The host has a newer version: fetch it past the browser's saved copy, reload, and join the same room again
+async function updateAndRejoin(code, hostBuild) {
+  let tried = '';
+  try { tried = sessionStorage.getItem('kart-room-update') || ''; } catch (e) {}
+  if (tried === hostBuild) { netReset('Your game is out of date. Close this tab and open the invite link again'); return; }
+  try { sessionStorage.setItem('kart-room-update', hostBuild); } catch (e) {}
+  netReset('Updating to the host\'s version…');
+  try { await fetch(location.pathname, { cache: 'reload' }); } catch (e) {}
+  location.href = location.pathname + '?r=' + encodeURIComponent(code) + '&rejoin=1';
 }
 
 function netReset(message) {
@@ -3453,12 +3464,17 @@ function onHostData(conn, d) {
   const you = net.players.find(p => p.id === conn.peer);
   if (d.t === 'join') {
     // A friend on the relay repeats the request until it hears back, in case the welcome got lost
-    if (you) { if (conn.relayed && net.conns.get(conn.peer) === conn) conn.send({ t: 'welcome', players: net.players, racing: !!race?.online }); return; }
+    if (you) { if (conn.relayed && net.conns.get(conn.peer) === conn) conn.send({ t: 'welcome', players: net.players, racing: !!race?.online, build: BUILD }); return; }
     if (net.players.length >= MAX_PLAYERS) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
     const player = cleanPlayer({ ...d, id: conn.peer, cpu: false });
+    // Everyone in a room needs the same version of the game. A friend who's behind updates themselves when they get
+    // the welcome; a friend who's ahead means the host is the one with the old copy.
+    const theirs = typeof d.build === 'string' ? d.build : '';
+    if (theirs < BUILD) netMessage(`${player.name} has an older version of the game. It should update itself; if not, they need to reopen the invite link`);
+    else if (theirs > BUILD) netMessage(`${player.name} has a newer version of the game than you. Refresh this page and make a new room`);
     net.conns.set(conn.peer, conn);
     net.players.push(player);
-    conn.send({ t: 'welcome', players: net.players, racing: !!race?.online });
+    conn.send({ t: 'welcome', players: net.players, racing: !!race?.online, build: BUILD });
     netSendRoster();
     drawRoom();
     return;
@@ -3499,11 +3515,15 @@ function onGuestData(d, code) {
   if (!d || typeof d !== 'object') return;
   const list = () => Array.isArray(d.players) ? d.players.slice(0, MAX_PLAYERS).map(cleanPlayer) : [];
   switch (d.t) {
-    case 'welcome':
+    case 'welcome': {
+      const hostBuild = typeof d.build === 'string' ? d.build : '';
+      if (hostBuild > BUILD) { updateAndRejoin(code, hostBuild); break; }
       net.room = code; net.players = list();
+      if (hostBuild < BUILD) { netMessage('The host has an older version of the game. Ask them to refresh their page and make a new room'); drawRoom(); break; }
       netMessage(d.racing ? 'A race is running, you are in the next one' : 'You are in! Waiting for the host');
       drawRoom();
       break;
+    }
     case 'roster': net.players = list(); drawRoom(); break;
     case 'full': netReset('That room is full'); break;
     case 'start': {
@@ -3646,6 +3666,8 @@ $('netShare').onclick = async () => {
 {
   const code = new URLSearchParams(location.search).get('r');
   if (code) { $('netCode').value = code.slice(0, 8); netMessage('Friend invite! Add your name and press Join'); }
+  // Back from updating to the host's version: join straight away
+  if (code && new URLSearchParams(location.search).has('rejoin') && $('netName').value.trim()) setTimeout(() => netJoin(), 300);
 }
 drawRoom();
 
