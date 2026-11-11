@@ -2077,9 +2077,10 @@ function addNameTag(k, name) {
   x.fillText(name, 128, 32, 220);
   const tex = new THREE.CanvasTexture(c);
   tex.encoding = THREE.sRGBEncoding;
-  k.tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, toneMapped: false, fog: false }));
+  // Drawn on top of everything, so a friend's name shows through hills, walls and other karts
+  k.tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, depthTest: false, toneMapped: false, fog: false, transparent: true }));
   k.tag.scale.set(3.2, .8, 1);
-  k.tag.renderOrder = 5;
+  k.tag.renderOrder = 10;
   world.scene.add(k.tag);
 }
 function removeNameTag(k) {
@@ -2638,6 +2639,14 @@ function drawHud() {
     m.strokeStyle = '#14161d'; m.lineWidth = 1.5;
     m.beginPath(); m.arc(mapX(k.x), mapY(k.z), k.isPlayer ? 5.5 : 4, 0, Math.PI * 2); m.fill(); m.stroke();
   }
+  // Friends' names next to their dots, so you can always find them
+  m.font = `italic 800 ${TOUCH ? 16 : 12}px system-ui, sans-serif`; m.textBaseline = 'middle'; m.lineWidth = 3; m.strokeStyle = 'rgba(10,12,18,.85)'; m.fillStyle = '#fff';
+  for (const k of r.karts) {
+    if (!k.tag) continue;
+    const x = mapX(k.x), y = mapY(k.z), right = x < 130;
+    m.textAlign = right ? 'left' : 'right';
+    m.strokeText(k.name, x + (right ? 7 : -7), y); m.fillText(k.name, x + (right ? 7 : -7), y);
+  }
 }
 
 function renderKart(k, dt) {
@@ -2649,12 +2658,12 @@ function renderKart(k, dt) {
   g.rotation.set(k.pitch, k.yaw + k.slip + spinYaw + (k.flipKind === 2 ? k.flipAngle : 0), k.flipKind === 1 ? k.flipAngle : 0);
   k.view.update(dt, k.v, k.drift ? clamp(k.drift * .2 + k.steer * .8, -1, 1) : k.steer);
   if (k.tag) {
-    // Grows a little with distance so far-away names stay readable, and fades out when very far
-    const d = raceCam.position.distanceTo(g.position), s = clamp(d / 14, 1, 2.6);
-    k.tag.position.set(g.position.x, g.position.y + 2.2 + s * .25, g.position.z);
+    // Grows with distance so a name stays the same size on screen however far ahead the kart is
+    const d = raceCam.position.distanceTo(g.position), s = Math.max(1, d / 11);
+    k.tag.position.set(g.position.x, g.position.y + 2 + s * .4, g.position.z);
     k.tag.scale.set(3.2 * s, .8 * s, 1);
-    k.tag.material.opacity = 1 - smooth(120, 180, d);
-    k.tag.visible = d < 180;
+    k.tag.material.opacity = 1 - smooth(260, 340, d);
+    k.tag.visible = d < 340;
   }
   const b = k.bubble;
   b.visible = k.shieldT > 0 || k.starT > 0;
@@ -3519,8 +3528,10 @@ function netStartRace() {
     const paints = PAINTS.map(p => p.name);
     for (let i = 0; i < MAX_PLAYERS - net.players.length; i++) cpus.push(cleanPlayer({ id: 'cpu' + i, name: CPU_NAMES[i], body: ids[i % ids.length], paint: paints[i % paints.length], number: 11 + i * 7, cpu: true }));
   }
-  // Friends start at the back, like you do against the CPUs
-  const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather;
+  // Friends start at the back, in a different order each race so the host isn't always in front of everyone
+  const people = [...net.players];
+  for (let i = people.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [people[i], people[j]] = [people[j], people[i]]; }
+  const racers = [...cpus, ...people], level = state.level, laps = state.laps, items = state.items, weather = state.weather;
   // In a Grand Prix the host picks the track for this round, and tells everyone the points so far
   const track = gp ? gp.order[gp.round] : state.track, cup = gp ? { round: gp.round, pts: gp.pts, order: gp.order } : null;
   netBroadcast({ t: 'start', racers, laps, items, weather, track, gp: cup });
