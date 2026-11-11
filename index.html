@@ -207,7 +207,6 @@
   <h2>Mode</h2>
   <div class="levels" id="modes"></div>
   <p class="hostNote" id="gpNote" hidden>Race all three tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
-  <p class="hostNote" id="modeNote" hidden>Grand Prix is for racing the CPUs. In a room you race the track picked below.</p>
   <h2>Track</h2>
   <div class="bodies" id="tracks"></div>
   <h2>Laps</h2>
@@ -217,7 +216,7 @@
   <h2>Race options</h2>
   <label>Lucky blocks <input type="checkbox" id="itemsBox" checked></label>
   <label>Music <input type="checkbox" id="musicBox" checked></label>
-  <p class="hostNote" id="hostNote" hidden>In a room, the host's track, laps, weather and lucky blocks are used.</p>
+  <p class="hostNote" id="hostNote" hidden>In a room, the host's mode, track, laps, weather and lucky blocks are used.</p>
   <h2>CPU level</h2>
   <div class="levels" id="levels"></div>
   <h2>Kart</h2>
@@ -2065,6 +2064,31 @@ function makeRacer(name, opts, isPlayer) {
   };
 }
 
+// A floating name over a friend's kart, so you know who's who. CPUs and your own kart don't get one.
+function addNameTag(k, name) {
+  const c = document.createElement('canvas'), x = c.getContext('2d');
+  c.width = 256; c.height = 64;
+  x.font = 'italic 900 34px system-ui, sans-serif';
+  const w = Math.min(244, x.measureText(name).width + 34);
+  x.fillStyle = 'rgba(18,20,28,.72)';
+  x.beginPath(); x.roundRect ? x.roundRect(128 - w / 2, 8, w, 48, 24) : x.rect(128 - w / 2, 8, w, 48); x.fill();
+  x.fillStyle = '#' + k.view.paint.toString(16).padStart(6, '0'); x.fillRect(128 - w / 2 + 16, 50, w - 32, 3);
+  x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(name, 128, 32, 220);
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  k.tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, toneMapped: false, fog: false }));
+  k.tag.scale.set(3.2, .8, 1);
+  k.tag.renderOrder = 5;
+  world.scene.add(k.tag);
+}
+function removeNameTag(k) {
+  if (!k.tag) return;
+  world.scene.remove(k.tag);
+  k.tag.material.map.dispose(); k.tag.material.dispose();
+  k.tag = null;
+}
+
 function placeOnTrack(k, i, lat) {
   const j = wrapI(i), yaw = Math.atan2(tx[j], tz[j]);
   k.x = cx[j] + nxOf(j) * lat; k.z = cz[j] + nzOf(j) * lat; k.y = cy[j];
@@ -2094,6 +2118,7 @@ function onlineGrid(plan) {
     const opts = { body: p.body, paint: paintNamed(p.paint), number: p.number }, mine = p.id === net.me;
     const k = p.cpu && net.host ? makeCPU(p.name, opts, slot, plan.level) : makeRacer(mine ? 'You' : p.name, opts, mine);
     k.id = p.id; k.slot = slot; k.snaps = [];
+    if (!p.cpu && !mine) addNameTag(k, p.name);
     if (!mine && !(p.cpu && net.host)) { k.remote = true; k.ai = false; }
     return k;
   });
@@ -2119,10 +2144,11 @@ function startRace(plan) {
   race = {
     karts, you, online: !!plan, waiting: !!plan, goAt: 0, t: -3.6, over: false, paused: false, shownAt: 0, camYaw: you.yaw, camX: 0, camY: 0, camZ: 0, lastBeep: 4, lapShown: 1, doneT: 0,
     laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, weather: plan ? plan.weather || 'sunny' : state.weather, rainT: 0, fx: [], shake: 0, place: 0, itemShown: null,
-    gp: !plan && !!gp,
+    // Grand Prix round and points so far, from your own cup or from the host's
+    gp: plan ? plan.gp || null : gp ? { round: gp.round, pts: gp.pts } : null,
   };
   // Track name on the way in, and which race of the cup this is
-  $('banner').innerHTML = `${TRACK.icon} ${TRACK.name}${race.gp ? `<div style="font-size:.55em">Grand Prix · race ${gp.round + 1} of ${GP_TRACKS.length}</div>` : ''}`;
+  $('banner').innerHTML = `${TRACK.icon} ${TRACK.name}${race.gp ? `<div style="font-size:.55em">Grand Prix · race ${race.gp.round + 1} of ${GP_TRACKS.length}</div>` : ''}`;
   $('banner').className = 'on';
   clearTimeout(trackBannerTimer);
   trackBannerTimer = setTimeout(() => { if (race && !race.waiting && race.lapShown === 1) $('banner').className = ''; }, 2800);
@@ -2142,7 +2168,7 @@ function startRace(plan) {
 let trackBannerTimer = 0;
 function leaveRace() {
   if (race) {
-    for (const k of race.karts) { world.scene.remove(k.view.group); k.bubble.material.dispose(); k.view.dispose(); }
+    for (const k of race.karts) { removeNameTag(k); world.scene.remove(k.view.group); k.bubble.material.dispose(); k.view.dispose(); }
     for (const f of race.fx) world.scene.remove(f.mesh);
     race = null;
   }
@@ -2457,7 +2483,8 @@ function drawResults() {
   $('overlayBody').innerHTML = `<h3>${MEDALS[place - 1] || ''} ${head}</h3>${bestLine}<table>${rows}</table>${race.gp ? gpTable() : ''}`;
   $('resume').hidden = true;
   $('again').hidden = race.online && !net.host;
-  $('again').textContent = !race.gp ? 'Race again' : gp.round + 1 < GP_TRACKS.length ? `Next race: ${TRACKS[GP_TRACKS[gp.round + 1]].icon} ${TRACKS[GP_TRACKS[gp.round + 1]].name}` : 'New Grand Prix';
+  const nextGp = race.gp && race.gp.round + 1 < GP_TRACKS.length ? TRACKS[GP_TRACKS[race.gp.round + 1]] : null;
+  $('again').textContent = !race.gp ? 'Race again' : nextGp ? `Next race: ${nextGp.icon} ${nextGp.name}` : 'New Grand Prix';
   setQuitLabel();
 }
 
@@ -2466,19 +2493,26 @@ function drawResults() {
 const GP_TRACKS = ['meadow', 'snow', 'city'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
 let gp = null;
 // Totals including this race. Karts still driving are counted in the place they're in now.
+// Online, racers are known by their id so two friends with the same name don't share points
+const gpKey = k => k.id ?? k.name;
 function gpTotals() {
-  const order = ranking(), tot = order.map((k, i) => ({ k, add: GP_POINTS[i] || 0, pts: (gp.pts[k.name] || 0) + (GP_POINTS[i] || 0) }));
+  const order = ranking(), tot = order.map((k, i) => ({ k, add: GP_POINTS[i] || 0, pts: (race.gp.pts[gpKey(k)] || 0) + (GP_POINTS[i] || 0) }));
   return tot.sort((a, b) => b.pts - a.pts || order.indexOf(a.k) - order.indexOf(b.k));
 }
 function gpTable() {
-  const last = gp.round + 1 >= GP_TRACKS.length, tot = gpTotals(), me = tot.findIndex(t => t.k.isPlayer) + 1;
-  const head = !last ? `Standings after race ${gp.round + 1} of ${GP_TRACKS.length}`
+  const round = race.gp.round, last = round + 1 >= GP_TRACKS.length, tot = gpTotals(), me = tot.findIndex(t => t.k.isPlayer) + 1;
+  const head = !last ? `Standings after race ${round + 1} of ${GP_TRACKS.length}`
     : me === 1 ? '🏆 You won the Grand Prix!' : me <= 3 ? `🏆 ${ordinal(me)} in the Grand Prix!` : `You finished ${ordinal(me)} in the Grand Prix`;
   const rows = tot.map((t, i) => `<tr class="${t.k.isPlayer ? 'me' : ''}"><td>${last ? MEDALS[i] || i + 1 : i + 1}</td><td>${esc(t.k.name)}</td><td>+${t.add}</td><td>${t.pts} pts</td></tr>`).join('');
-  return `<p class="gpHead">${head}</p><table>${rows}</table>`;
+  const wait = race.online && !net.host ? `<p class="best">${last ? 'The host can start a new Grand Prix' : 'Waiting for the host to start the next race'}</p>` : '';
+  return `<p class="gpHead">${head}</p><table>${rows}</table>${wait}`;
 }
+// Bank this race's points and move on (you, or the host for a room). After the last race a new cup starts.
 function gpNext() {
-  for (const t of gpTotals()) gp.pts[t.k.name] = t.pts;
+  if (!gp) return;
+  const pts = {};
+  for (const t of gpTotals()) pts[gpKey(t.k)] = t.pts;
+  gp.pts = pts;
   gp.round++;
   if (gp.round >= GP_TRACKS.length) gp = { round: 0, pts: {} };
 }
@@ -2608,6 +2642,14 @@ function renderKart(k, dt) {
   g.position.set(k.x, k.y + k.hopY + (k.spinT > 0 ? Math.sin(sp * Math.PI) * .5 : 0), k.z);
   g.rotation.set(k.pitch, k.yaw + k.slip + spinYaw + (k.flipKind === 2 ? k.flipAngle : 0), k.flipKind === 1 ? k.flipAngle : 0);
   k.view.update(dt, k.v, k.drift ? clamp(k.drift * .2 + k.steer * .8, -1, 1) : k.steer);
+  if (k.tag) {
+    // Grows a little with distance so far-away names stay readable, and fades out when very far
+    const d = raceCam.position.distanceTo(g.position), s = clamp(d / 14, 1, 2.6);
+    k.tag.position.set(g.position.x, g.position.y + 2.2 + s * .25, g.position.z);
+    k.tag.scale.set(3.2 * s, .8 * s, 1);
+    k.tag.material.opacity = 1 - smooth(120, 180, d);
+    k.tag.visible = d < 180;
+  }
   const b = k.bubble;
   b.visible = k.shieldT > 0 || k.starT > 0;
   if (b.visible) {
@@ -2985,11 +3027,10 @@ LAP_CHOICES.forEach(n => {
 });
 const MODES = { race: 'Single race', gp: '🏆 Grand Prix' };
 function drawTrackPicker() {
-  const inRoom = !!net.room, cup = state.mode === 'gp' && !inRoom;
+  const inRoom = !!net.room, cup = state.mode === 'gp';
   document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.mode));
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !cup && b.dataset.id === state.track); b.disabled = cup; b.style.opacity = cup ? .55 : ''; });
   $('gpNote').hidden = !cup;
-  $('modeNote').hidden = !(inRoom && state.mode === 'gp');
   // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow
   const snowy = !cup && TRACKS[state.track].theme === 'snow';
   document.querySelectorAll('#weather button').forEach(b => { b.textContent = snowy ? SNOW_WEATHER[b.dataset.id] : WEATHERS[b.dataset.id].label; });
@@ -3024,16 +3065,15 @@ $('musicBox').onchange = () => {
 };
 $('start').onclick = () => {
   goFullscreen();
-  if (!net.room) { gp = state.mode === 'gp' ? { round: 0, pts: {} } : null; startRace(); }
+  gp = state.mode === 'gp' ? { round: 0, pts: {} } : null;
+  if (!net.room) startRace();
   else if (net.host) netStartRace();
 };
 $('resume').onclick = togglePause;
 $('again').onclick = () => {
+  if (race?.gp && race.over) gpNext();
   if (race?.online) netStartRace();
-  else {
-    if (race?.gp && race.over) gpNext();
-    leaveRace(); startRace();
-  }
+  else { leaveRace(); startRace(); }
 };
 $('quit').onclick = () => {
   try { screen.orientation?.unlock?.(); } catch (e) {}
@@ -3085,7 +3125,8 @@ function drawRoom() {
   $('netCpuRow').hidden = !net.host;
   $('hostNote').hidden = !inRoom || net.host;
   $('start').disabled = inRoom && !net.host;
-  $('start').textContent = !inRoom ? (state.mode === 'gp' ? 'Start Grand Prix' : 'Start race') : net.host ? `Start race (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
+  const what = state.mode === 'gp' ? 'Start Grand Prix' : 'Start race';
+  $('start').textContent = !inRoom ? what : net.host ? `${what} (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
   if (!inRoom) return;
   $('netCodeShow').textContent = net.room.toUpperCase();
   $('netPlayers').innerHTML = net.players.map((p, i) => `<li>${esc(p.name)} <small>${BODIES[p.body].name}${i === 0 ? ', host' : ''}${p.id === net.me ? ', you' : ''}</small></li>`).join('');
@@ -3360,6 +3401,7 @@ function racerById(id) { return race?.online ? race.karts.find(k => k.id === id)
 function dropRacer(k) {
   if (!k || !race) return;
   race.karts.splice(race.karts.indexOf(k), 1);
+  removeNameTag(k);
   world.scene.remove(k.view.group);
   k.view.dispose();
 }
@@ -3438,7 +3480,7 @@ function onGuestData(d, code) {
     case 'start': {
       const racers = Array.isArray(d.racers) ? d.racers.slice(0, MAX_PLAYERS).map(cleanPlayer) : [];
       if (!racers.some(p => p.id === net.me)) break;
-      netBegin({ racers, laps: LAP_CHOICES.includes(d.laps) ? d.laps : 3, items: d.items !== false, weather: WEATHERS[d.weather] ? d.weather : 'sunny', track: TRACKS[d.track] ? d.track : 'meadow' });
+      netBegin({ racers, laps: LAP_CHOICES.includes(d.laps) ? d.laps : 3, items: d.items !== false, weather: WEATHERS[d.weather] ? d.weather : 'sunny', track: TRACKS[d.track] ? d.track : 'meadow', gp: cleanGp(d.gp, racers) });
       netToHost({ t: 'ready' });
       break;
     }
@@ -3470,18 +3512,26 @@ function netStartRace() {
     for (let i = 0; i < MAX_PLAYERS - net.players.length; i++) cpus.push(cleanPlayer({ id: 'cpu' + i, name: CPU_NAMES[i], body: ids[i % ids.length], paint: paints[i % paints.length], number: 11 + i * 7, cpu: true }));
   }
   // Friends start at the back, like you do against the CPUs
-  const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather, track = state.track;
-  netBroadcast({ t: 'start', racers, laps, items, weather, track });
-  netBegin({ racers, level, laps, items, weather, track });
+  const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather;
+  // In a Grand Prix the host picks the track for this round, and tells everyone the points so far
+  const track = gp ? GP_TRACKS[gp.round] : state.track, cup = gp ? { round: gp.round, pts: gp.pts } : null;
+  netBroadcast({ t: 'start', racers, laps, items, weather, track, gp: cup });
+  netBegin({ racers, level, laps, items, weather, track, gp: cup });
   net.ready = new Set([net.me]);
   clearTimeout(net.goTimer);
   net.goTimer = setTimeout(netGoAll, READY_WAIT);
   netCheckReady();
 }
+function cleanGp(g, racers) {
+  if (!g || typeof g !== 'object' || ![0, 1, 2].includes(g.round)) return null;
+  const pts = {};
+  for (const p of racers) { const v = +g.pts?.[p.id]; if (Number.isFinite(v)) pts[p.id] = clamp(Math.round(v), 0, 999); }
+  return { round: g.round, pts };
+}
 function netBegin(plan) {
   if (race) leaveRace();
   startRace(plan);
-  $('banner').textContent = 'Waiting for everyone';
+  $('banner').innerHTML = `${TRACK.icon} ${TRACK.name}<div style="font-size:.55em">${race.gp ? `Grand Prix · race ${race.gp.round + 1} of ${GP_TRACKS.length} · ` : ''}Waiting for everyone</div>`;
   $('banner').className = 'on';
 }
 function netCheckReady() {
