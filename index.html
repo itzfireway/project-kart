@@ -271,6 +271,18 @@
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 'use strict';
+// Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
+// browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
+const BUILD = '2026-11-11.2';
+(async () => {
+  try {
+    const res = await fetch(location.pathname, { cache: 'reload' });
+    const latest = (await res.text()).match(/const BUILD = '([^']+)'/)?.[1];
+    if (!latest || latest === BUILD || sessionStorage.getItem('kart-reloaded') === latest) return;
+    sessionStorage.setItem('kart-reloaded', latest);
+    if (!race && !net.room) location.reload();
+  } catch (e) {}
+})();
 const V3 = THREE.Vector3;
 const v3 = (x, y, z) => new V3(x, y, z);
 
