@@ -465,6 +465,32 @@ const BODIES = {
     steer: { y: .63, z: .28 }, plate: { y: .395, z: .62, tilt: .2, r: .09 },
     pipes: [{ x: 0, y: .54, z: -.96 }], hip: .3,
   },
+  rocket: {
+    name: 'Rocket', blurb: 'Jet engine and twin fins, fastest on the straights',
+    stats: { Speed: 5, Accel: 2, Handling: 2, Weight: 3 },
+    front: { z: 1, x: .7, r: .23, w: .22 }, rear: { z: -.84, x: .78, r: .31, w: .36 },
+    shell: [
+      { z: -1.12, w: .3, b: .22, t: .46, n: 2.6 }, { z: -.92, w: .46, b: .15, t: .58, n: 3 }, { z: -.58, w: .52, b: .12, t: .62, n: 3.2 },
+      { z: -.3, w: .52, b: .12, t: .4, n: 3.2 }, { z: .16, w: .46, b: .12, t: .34, n: 3 }, { z: .46, w: .38, b: .13, t: .44, n: 2.6 },
+      { z: .96, w: .24, b: .15, t: .36, n: 2.3 }, { z: 1.38, w: .14, b: .17, t: .28, n: 2.1 }, { z: 1.62, w: .04, b: .2, t: .24, n: 2 },
+    ],
+    pod: { x: .58, z0: -.6, z1: .46, b: .14, t: .36, w: .14 },
+    steer: { y: .67, z: .3 }, plate: { y: .425, z: .66, tilt: .22, r: .11 },
+    pipes: [], hip: .32, jet: true,
+  },
+  buggy: {
+    name: 'Buggy', blurb: 'Chunky off-roader, barely slows down on grass or snow',
+    stats: { Speed: 2, Accel: 4, Handling: 3, Weight: 3 }, grass: .95,
+    front: { z: .9, x: .82, r: .38, w: .34 }, rear: { z: -.84, x: .86, r: .44, w: .42 },
+    shell: [
+      { z: -1, w: .36, b: .32, t: .6, n: 4.4 }, { z: -.86, w: .5, b: .28, t: .74, n: 5 }, { z: -.56, w: .56, b: .26, t: .8, n: 5 },
+      { z: -.3, w: .56, b: .26, t: .6, n: 5 }, { z: .14, w: .54, b: .26, t: .54, n: 5 }, { z: .42, w: .52, b: .27, t: .7, n: 4.6 },
+      { z: .9, w: .44, b: .3, t: .62, n: 4.4 }, { z: 1.16, w: .38, b: .34, t: .56, n: 4 }, { z: 1.24, w: .3, b: .38, t: .52, n: 3.4 },
+    ],
+    pod: { x: .64, z0: -.5, z1: .36, b: .3, t: .54, w: .12 },
+    steer: { y: .92, z: .28 }, plate: { y: .67, z: .7, tilt: .15, r: .15 },
+    pipes: [{ x: .3, y: .9, z: -.9 }, { x: -.3, y: .9, z: -.9 }], hip: .52,
+  },
 };
 
 const PAINTS = [
@@ -491,6 +517,7 @@ function buildKart({ body = 'sprint', paint = PAINTS[0], number = 7 } = {}) {
     visor: std({ color: 0x0b0d14, metalness: .9, roughness: .08 }),
     pipe: std({ color: 0xe8eaef, metalness: 1, roughness: .13, side: THREE.DoubleSide }),
     lamp: std({ color: 0xfff2c4, emissive: 0xffdf80, emissiveIntensity: 1.3 }),
+    flame: std({ color: 0xff8a2a, emissive: 0xff5a00, emissiveIntensity: 2.2 }),
     seat: std({ color: 0x1b1c22, metalness: 0, roughness: .7 }),
     plate: new THREE.MeshStandardMaterial({ map: numberTexture(number, '#' + paint.body.toString(16).padStart(6, '0')), roughness: .45 }),
   };
@@ -536,7 +563,7 @@ function buildKart({ body = 'sprint', paint = PAINTS[0], number = 7 } = {}) {
 
   // Engine and exhausts at the back
   const engineY = spec.shell[2].t + .02;
-  for (const side of [-1, 1]) {
+  if (!spec.jet) for (const side of [-1, 1]) {
     const head = new THREE.CylinderGeometry(.07, .08, .14, 14);
     mesh(head, mats.chrome, chassis, side * .15, engineY + .05, -.8);
   }
@@ -588,6 +615,49 @@ function buildKart({ body = 'sprint', paint = PAINTS[0], number = 7 } = {}) {
       const glass = mesh(new THREE.CircleGeometry(.07, 20), mats.lamp, chassis, side * .32, .67, .992);
       glass.castShadow = false;
     }
+  } else if (body === 'rocket') {
+    // Jet engine: a dark barrel, a chrome nozzle and a glowing core
+    const barrel = new THREE.CylinderGeometry(.21, .25, .62, 28); barrel.rotateX(Math.PI / 2);
+    mesh(barrel, mats.dark, chassis, 0, .64, -1.02);
+    const nozzle = new THREE.CylinderGeometry(.27, .22, .16, 28, 1, true); nozzle.rotateX(Math.PI / 2);
+    mesh(nozzle, mats.pipe, chassis, 0, .64, -1.4);
+    const intake = new THREE.TorusGeometry(.215, .035, 10, 28);
+    mesh(intake, mats.chrome, chassis, 0, .64, -.71);
+    const core = mesh(new THREE.CircleGeometry(.2, 28), mats.flame, chassis, 0, .64, -1.36);
+    core.rotation.y = Math.PI; core.castShadow = false;
+    for (const side of [-1, 1]) {
+      const x = side * .36;
+      mesh(loft([ // tail fins either side of the jet
+        { z: -1.24, w: .014, b: .52, t: .62, n: 2.4, x }, { z: -1.02, w: .02, b: .56, t: 1.08, n: 3, x }, { z: -.82, w: .02, b: .58, t: 1.12, n: 3, x }, { z: -.68, w: .014, b: .6, t: .74, n: 2.4, x },
+      ], 16, 6), mats.accent, chassis);
+    }
+    mesh(loft([ // front wing
+      { z: 1.3, w: .52, b: .18, t: .2, n: 6 }, { z: 1.44, w: .6, b: .17, t: .205, n: 6 }, { z: 1.56, w: .48, b: .18, t: .196, n: 6 },
+    ], 20, 5), mats.accent, chassis);
+  } else if (body === 'buggy') {
+    const tube = (a, b) => bar(a, b, .034, mats.chrome, chassis);
+    // Roll cage over the driver, with a light bar across the top
+    for (const side of [-1, 1]) {
+      const top = v3(side * .42, 1.6, -.66);
+      tube(v3(side * .52, .78, -.66), top);
+      tube(top, v3(side * .46, .7, .42));
+      tube(top, v3(side * .4, .76, -.98));
+      mesh(new THREE.SphereGeometry(.034, 12, 8), mats.chrome, chassis, top.x, top.y, top.z);
+    }
+    tube(v3(-.42, 1.6, -.66), v3(.42, 1.6, -.66));
+    mesh(new THREE.BoxGeometry(.78, .1, .12), mats.dark, chassis, 0, 1.68, -.64);
+    for (const x of [-.27, -.09, .09, .27]) {
+      const glass = mesh(new THREE.CircleGeometry(.04, 16), mats.lamp, chassis, x, 1.68, -.577);
+      glass.castShadow = false;
+    }
+    // Push bar on the nose and a spare wheel on the back
+    for (const side of [-1, 1]) { tube(v3(side * .3, .42, 1.12), v3(side * .34, .42, 1.36)); tube(v3(side * .34, .42, 1.36), v3(side * .3, .7, 1.36)); }
+    tube(v3(-.34, .42, 1.36), v3(.34, .42, 1.36));
+    tube(v3(-.3, .7, 1.36), v3(.3, .7, 1.36));
+    const spare = buildWheel(.3, .2, mats);
+    spare.rotation.y = Math.PI / 2;
+    spare.position.set(0, .72, -1.16);
+    chassis.add(spare);
   } else {
     mesh(loft([ // dorsal fin running back from the headrest
       { z: -1.1, w: .012, b: .42, t: .5, n: 2.4 }, { z: -.82, w: .018, b: .46, t: .94, n: 3 }, { z: -.62, w: .018, b: .5, t: 1, n: 3 }, { z: -.5, w: .012, b: .6, t: .7, n: 2.4 },
@@ -1988,7 +2058,7 @@ function makeRacer(name, opts, isPlayer) {
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
     onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [],
-    top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: .85, mass: 1 + st.Weight * .35,
+    top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: BODIES[opts.body].grass ?? .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
     drift: 0, driftT: 0, driftIn: 0, boostT: 0, padT: 0, hopY: 0, hopV: 0, pitch: 0, slip: 0,
     throttle: 0, brake: 0, wantSteer: 0, wantDrift: false,
@@ -2012,7 +2082,7 @@ function makeCPU(name, opts, i, level) {
 
 function soloGrid() {
   const paints = PAINTS.filter(p => p !== state.paint), ids = Object.keys(BODIES);
-  const karts = CPU_NAMES.map((name, i) => makeCPU(name, { body: ids[i % 3], paint: paints[i % paints.length], number: 11 + i * 7 }, i, state.level));
+  const karts = CPU_NAMES.map((name, i) => makeCPU(name, { body: ids[i % ids.length], paint: paints[i % paints.length], number: 11 + i * 7 }, i, state.level));
   // You start at the back of the grid and race through the pack
   karts.push(makeRacer('You', state, true));
   return karts;
@@ -3397,7 +3467,7 @@ function netStartRace() {
   const ids = Object.keys(BODIES), cpus = [];
   if ($('netCpu').checked) {
     const paints = PAINTS.map(p => p.name);
-    for (let i = 0; i < MAX_PLAYERS - net.players.length; i++) cpus.push(cleanPlayer({ id: 'cpu' + i, name: CPU_NAMES[i], body: ids[i % 3], paint: paints[i % paints.length], number: 11 + i * 7, cpu: true }));
+    for (let i = 0; i < MAX_PLAYERS - net.players.length; i++) cpus.push(cleanPlayer({ id: 'cpu' + i, name: CPU_NAMES[i], body: ids[i % ids.length], paint: paints[i % paints.length], number: 11 + i * 7, cpu: true }));
   }
   // Friends start at the back, like you do against the CPUs
   const racers = [...cpus, ...net.players], level = state.level, laps = state.laps, items = state.items, weather = state.weather, track = state.track;
