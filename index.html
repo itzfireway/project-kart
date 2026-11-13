@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.4';
+const BUILD = '2026-11-14.5';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -990,13 +990,14 @@ const TRACKS = {
     ],
   },
   city: {
-    name: 'Neon City', icon: '🌃', blurb: 'Night streets, a long outer loop and a twisty zig-zag through the middle', theme: 'city', pond: null,
+    name: 'Neon City', icon: '🌃', blurb: 'Night streets, winding esses and a twisty zig-zag through the middle', theme: 'city', pond: null,
     pts: [
-      [-44, 189, 0], [76, 189, 0], [158, 183, 0], [186, 145, 0], [189, 38, 1], [189, -88, 1], [183, -170, 2], [145, -186, 2],
-      [63, -180, 2], [-13, -183, 2], [-94, -189, 2], [-170, -183, 2], [-189, -145, 2], [-176, -94, 2], [-132, -76, 3], [-82, -91, 3],
-      [-44, -79, 3], [-19, -44, 3], [6, -32, 3], [32, -45, 3], [54, -74, 3], [81, -100, 3], [110, -88, 3], [112, -44, 2],
-      [102, 13, 2], [88, 50, 2], [57, 63, 2], [0, 50, 1], [-63, 28, 1], [-132, 19, 1], [-170, 38, 1], [-180, 101, 0],
-      [-173, 158, 0], [-132, 189, 0],
+      [-44, 189, 0], [0, 189, 0], [38, 182, 0], [66, 160, 0], [100, 150, 0], [128, 162, 1], [164, 174, 1], [187, 144, 1],
+      [170, 106, 1], [160, 74, 1], [184, 36, 2], [190, -4, 2], [172, -48, 2], [174, -96, 2], [190, -136, 2], [183, -170, 3],
+      [145, -186, 3], [63, -180, 3], [-13, -183, 3], [-94, -189, 3], [-170, -183, 3], [-189, -145, 3], [-176, -94, 3], [-132, -76, 3],
+      [-82, -91, 3], [-44, -79, 3], [-19, -44, 3], [4, -32, 3], [26, -45, 3], [44, -74, 2], [71, -100, 2], [100, -88, 2],
+      [102, -44, 2], [92, 13, 2], [81, 50, 1], [54, 63, 1], [0, 50, 1], [-63, 28, 1], [-132, 19, 1], [-170, 38, 0],
+      [-180, 101, 0], [-173, 158, 0], [-132, 189, 0],
     ],
   },
   desert: {
