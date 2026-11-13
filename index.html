@@ -206,7 +206,7 @@
   </div>
   <h2>Mode</h2>
   <div class="levels" id="modes"></div>
-  <p class="hostNote" id="gpNote" hidden>Race all three tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
+  <p class="hostNote" id="gpNote" hidden>Race all four tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
   <h2>Track</h2>
   <div class="bodies" id="tracks"></div>
   <h2>Laps</h2>
@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-11.3';
+const BUILD = '2026-11-13.1';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -997,6 +997,14 @@ const TRACKS = {
       [-92, -40, 0], [-150, -62, 0], [-178, -100, 0], [-176, -140, 0], [-140, -160, 0],
     ],
   },
+  desert: {
+    name: 'Canyon Run', icon: '🏜️', blurb: 'Sand dunes, cacti, an oasis and a giant rock arch', theme: 'desert', pond: { x: -10, z: 100, r: 24 },
+    pts: [
+      [40, -155, 0], [135, -155, 0], [180, -120, 1], [172, -70, 2], [115, -55, 3], [70, -25, 4], [85, 28, 5], [150, 38, 6],
+      [186, 88, 6], [165, 160, 5], [105, 186, 4], [50, 150, 3], [0, 178, 3], [-80, 190, 2], [-150, 165, 1], [-185, 105, 1],
+      [-150, 58, 2], [-92, 62, 3], [-55, 22, 3], [-100, -22, 2], [-168, -42, 1], [-188, -100, 0], [-155, -152, 0], [-60, -160, 0],
+    ],
+  },
 };
 const TRACK_IDS = Object.keys(TRACKS);
 const HW = 9, WALL = HW + 26, N = 1100;   // HW is half the road width, WALL is how far from the centre you can stray
@@ -1079,7 +1087,9 @@ function nearestAny(x, z) {
 const GRID = 176, CELL = 3, GROUND = new Float32Array((GRID + 1) * (GRID + 1)), HALF = GRID * CELL / 2;
 function naturalHeight(x, z) {
   const th = TRACK.theme;
-  let h = th === 'city' ? 0 : th === 'snow'
+  let h = th === 'city' ? 0 : th === 'desert'
+    ? 2.6 + Math.sin(x * .028 + Math.sin(z * .019) * 2.2) * 2.6 + Math.sin(z * .055 + x * .01) * 1.1
+    : th === 'snow'
     ? 3.5 + Math.sin(x * .018) * Math.cos(z * .015) * 6 + Math.sin(x * .045 + 1.3) * Math.sin(z * .04) * 2.2
     : 2.2 + Math.sin(x * .021) * Math.cos(z * .017) * 3.2 + Math.sin(x * .05 + 1.3) * Math.sin(z * .043) * 1.3;
   if (POND) {
@@ -1152,6 +1162,11 @@ const THEMES = {
     skyTop: 0x03040b, skyHor: 0x2b1f55, field: 0x16161d, fog: [0x1d1838, 150, 780], fogStorm: 0x15141f, skyStorm: [.62, .62, .7], cloud: [.22, .2, .32],
     hemi: [0x7a84d0, 0x2c2440, .55], sun: [0xa9bcff, .55],
   },
+  desert: {
+    ground: [0xd6a565, 0xe7c085], edge: 0xb7814f, shore: 0x7f9a44, outer: 0xd3a264, kerb: ['#e2452a', '#f6f1e6'], wall: ['#e0792a', '#f4ead8'],
+    skyTop: 0x3478cc, skyHor: 0xf5d9b0, field: 0xd8ad70, fog: [0xf0d3a8, 190, 920], fogStorm: 0x8f7458, skyStorm: [.58, .5, .44], cloud: [1, .96, .9],
+    hemi: [0xfff0d8, 0xb8865a, .66], sun: [0xffe6c2, 1.12],
+  },
 };
 
 let world = null;
@@ -1168,7 +1183,7 @@ function buildWorld() {
   const w = new THREE.Scene();
   const rnd = (() => { let s = 12345; return () => (s = s * 16807 % 2147483647) / 2147483647; })();
   const lam = o => new THREE.MeshLambertMaterial(o);
-  const TH = TRACK.theme, LOOK = THEMES[TH], SNOW = TH === 'snow', CITY = TH === 'city', MEADOW = TH === 'meadow';
+  const TH = TRACK.theme, LOOK = THEMES[TH], SNOW = TH === 'snow', CITY = TH === 'city', MEADOW = TH === 'meadow', DESERT = TH === 'desert';
   const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
   const pondDist = (x, z) => POND ? Math.hypot(x - POND.x, z - POND.z) : 1e9;
   // The grandstand sits on the left of the road just before the start line, facing it
@@ -1214,7 +1229,19 @@ function buildWorld() {
     for (let i = 0; i < 30000; i++) { const v = 170 + rnd() * 70 | 0; x.fillStyle = `rgba(${v},${v},${v + 3},.6)`; x.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 2, 1 + rnd() * 2); }
     x.strokeStyle = 'rgba(70,70,76,.7)'; x.lineWidth = 3;
     for (let k = 0; k <= 4; k++) { x.beginPath(); x.moveTo(k * W / 4, 0); x.lineTo(k * W / 4, H); x.stroke(); x.beginPath(); x.moveTo(0, k * H / 4); x.lineTo(W, k * H / 4); x.stroke(); }
-  }, 60, 60) : canvasTex(512, 512, (x, W, H) => {
+  }, 60, 60) : DESERT ? canvasTex(512, 512, (x, W, H) => {
+    // Desert: wind ripples in the sand and scattered grains. The waves fit the width exactly so the texture tiles.
+    x.fillStyle = '#f1e8d8'; x.fillRect(0, 0, W, H);
+    for (let r = 0; r < 26; r++) {
+      const y0 = r * H / 26, ph = rnd() * 6.3, amp = 3 + rnd() * 4;
+      for (const [off, col] of [[0, 'rgba(255,255,250,.55)'], [3, 'rgba(180,150,115,.32)']]) {
+        x.strokeStyle = col; x.lineWidth = 2.2; x.beginPath();
+        for (let px = 0; px <= W; px += 4) { const y = y0 + off + Math.sin(px / W * Math.PI * 4 + ph) * amp + Math.sin(px / W * Math.PI * 10 + ph * 2) * 1.2; px ? x.lineTo(px, y) : x.moveTo(px, y); }
+        x.stroke();
+      }
+    }
+    for (let i = 0; i < 22000; i++) { const v = 190 + rnd() * 60 | 0; x.fillStyle = `rgba(${v},${v * .9 | 0},${v * .78 | 0},.55)`; x.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 1.5, 1 + rnd() * 1.5); }
+  }, 40, 40) : canvasTex(512, 512, (x, W, H) => {
     x.fillStyle = '#e6eadc'; x.fillRect(0, 0, W, H);
     for (let i = 0; i < 260; i++) {
       const px = rnd() * W, py = rnd() * H, r = 20 + rnd() * 50, g = x.createRadialGradient(px, py, 0, px, py, r), v = rnd() < .5 ? '200,210,180' : '255,255,240';
@@ -1254,7 +1281,7 @@ function buildWorld() {
   if (POND) {
     const pond = new THREE.Mesh(new THREE.CircleGeometry(POND.r + 6, 64), SNOW
       ? new THREE.MeshStandardMaterial({ color: 0xa8d4ec, metalness: .05, roughness: .12, normalMap: ripple, normalScale: new THREE.Vector2(.04, .04), envMapIntensity: 1.2 })
-      : new THREE.MeshStandardMaterial({ color: 0x1f6fa8, metalness: .1, roughness: .06, normalMap: ripple, normalScale: new THREE.Vector2(.35, .35), envMapIntensity: 1.3 }));
+      : new THREE.MeshStandardMaterial({ color: DESERT ? 0x1b8fa0 : 0x1f6fa8, metalness: .1, roughness: .06, normalMap: ripple, normalScale: new THREE.Vector2(.35, .35), envMapIntensity: 1.3 }));
     pond.rotation.x = -Math.PI / 2; pond.position.set(POND.x, -.85, POND.z);
     w.add(pond);
   }
@@ -1395,17 +1422,18 @@ function buildWorld() {
 
   // Trees past the wall
   const spots = [];
-  for (let tries = 0; tries < 9000 && spots.length < (CITY ? 0 : 620); tries++) {
+  for (let tries = 0; tries < 9000 && spots.length < (CITY ? 0 : DESERT ? 420 : 620); tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
     if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z)) continue;
     spots.push([x, z, groundAt(x, z)]);
   }
   // Two kinds of tree: tall pines with three tiers, and round leafy ones made of a few chunky blobs
   const m4 = new THREE.Object3D(), tint = new THREE.Color();
-  const pines = spots.filter(() => SNOW || rnd() < .55), rounds = spots.filter(s => !pines.includes(s));
+  // The desert gets cacti on these spots instead of trees (see buildDesert)
+  const treeSpots = DESERT ? [] : spots, pines = treeSpots.filter(() => SNOW || rnd() < .55), rounds = treeSpots.filter(s => !pines.includes(s));
   const leafy = lam({ color: 0xffffff, flatShading: true }), bark = lam({ color: 0x6d4a2d });
   const inst = (geo, mat, n) => { const m = new THREE.InstancedMesh(geo, mat, Math.max(1, n)); m.setColorAt(0, new THREE.Color(1, 1, 1)); m.count = n; m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; w.add(m); return m; };
-  const trunks = inst(new THREE.CylinderGeometry(.35, .55, 3, 7), bark, spots.length);
+  const trunks = inst(new THREE.CylinderGeometry(.35, .55, 3, 7), bark, treeSpots.length);
   const tiers = [[3, 7, 4.6], [2.3, 5.4, 7.2], [1.5, 3.8, 9.4]].map(([r, h, y]) => ({ y, m: inst(new THREE.ConeGeometry(r, h, 8), leafy, pines.length) }));
   const blobGeo = new THREE.IcosahedronGeometry(1, 1), blobs = [[0, 5.2, 0, 2.6], [1.3, 4.4, .6, 1.8], [-1.2, 4.6, -.5, 1.9], [.2, 6.6, -.3, 1.8]];
   const blobMeshes = blobs.map(() => inst(blobGeo, leafy, rounds.length));
@@ -1434,7 +1462,7 @@ function buildWorld() {
   // Bushes hugging the outside of the tyre wall
   const bushSpots = [];
   for (let i = 0; i < N; i += 4) for (const s of [-1, 1]) {
-    if (CITY || rnd() < .45) continue;
+    if (CITY || rnd() < (DESERT ? .8 : .45)) continue;
     const off = WALL + 2.2 + rnd() * 3, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
     if (nearestAny(x, z).d < WALL + 1.5 || pondDist(x, z) < (POND?.r ?? 0) + 4 || nearStand(x, z)) continue;
     bushSpots.push([x, z]);
@@ -1445,7 +1473,7 @@ function buildWorld() {
     const s = .9 + rnd() * 1.1;
     m4.position.set(x, groundAt(x, z) + s * .35, z); m4.rotation.set(rnd() * 3, rnd() * 3, 0); m4.scale.set(s * 1.3, s * .85, s * 1.2); m4.updateMatrix();
     // On the snow track these are snow drifts rather than bushes
-    bushes.setMatrixAt(i, m4.matrix); bushes.setColorAt(i, SNOW ? tint.setHSL(.58, .3, .86 + rnd() * .08) : tint.setHSL(.24 + rnd() * .1, .5, .22 + rnd() * .08));
+    bushes.setMatrixAt(i, m4.matrix); bushes.setColorAt(i, SNOW ? tint.setHSL(.58, .3, .86 + rnd() * .08) : DESERT ? tint.setHSL(.1 + rnd() * .05, .35, .3 + rnd() * .08) : tint.setHSL(.24 + rnd() * .1, .5, .22 + rnd() * .08));
   });
 
   // Grass tufts and wildflowers on the run-off between the road and the wall
@@ -1492,7 +1520,16 @@ function buildWorld() {
 
   // Far mountains (bigger and snowier round the snow track). The city has its skyline instead.
   const rocks = lam({ color: SNOW ? 0x8a96a6 : 0x74808f, flatShading: true }), snow = lam({ color: 0xf1f4f8, flatShading: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-  for (let i = 0; i < (CITY ? 0 : SNOW ? 32 : 26); i++) {
+  // Round the desert: flat-topped red mesas with a paler band near the top
+  if (DESERT) for (let i = 0; i < 24; i++) {
+    const a = i / 24 * Math.PI * 2 + rnd() * .12, r = 600 + rnd() * 140, h = 60 + rnd() * 90, wide = 70 + rnd() * 110, seg = 6 + (rnd() * 3 | 0);
+    const red = lam({ color: new THREE.Color().setHSL(.04 + rnd() * .03, .55, .4 + rnd() * .08), flatShading: true });
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(wide * .72, wide, h, seg), red);
+    m.position.set(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r); w.add(m);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(wide * .73, wide * .76, h * .12, seg), lam({ color: 0xe0a070, flatShading: true }));
+    band.position.set(m.position.x, h * .8 - 2, m.position.z); band.rotation.y = m.rotation.y; w.add(band);
+  }
+  for (let i = 0; i < (CITY || DESERT ? 0 : SNOW ? 32 : 26); i++) {
     const a = i / (SNOW ? 32 : 26) * Math.PI * 2 + rnd() * .1, r = (SNOW ? 560 : 620) + rnd() * 120, h = (SNOW ? 150 : 90) + rnd() * (SNOW ? 160 : 110), wide = 90 + rnd() * 90;
     const m = new THREE.Mesh(new THREE.ConeGeometry(wide, h, 5 + (rnd() * 3 | 0)), rocks);
     m.position.set(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r); w.add(m);
@@ -1642,6 +1679,7 @@ function buildWorld() {
   }
   if (SNOW) buildSnowmen(w, rnd, nearStand);
   if (CITY) buildCity(w, rnd, nearStand, lam, size);
+  if (DESERT) buildDesert(w, rnd, nearStand, lam, spots);
 
   buildRamps(w);
   const look = {
@@ -1671,6 +1709,81 @@ function buildSnowmen(w, rnd, nearStand) {
     const h2 = new THREE.Mesh(brim, coal); h2.position.y = 4.57; g.add(h2);
     w.add(g);
     n++;
+  }
+}
+
+// Desert: saguaro cacti, palm trees round the oasis, red rock pillars and a big stone arch over the road.
+// Everything small is instanced (one draw call per part) so phones stay smooth.
+function buildDesert(w, rnd, nearStand, lam, spots) {
+  const parent = new THREE.Matrix4(), local = new THREE.Matrix4(), o = new THREE.Object3D(), tint = new THREE.Color();
+  // The colour buffer is sized from count when it's first made, so colour instance 0 before setting count to 0
+  const make = (geo, mat, max) => { const m = new THREE.InstancedMesh(geo, mat, max); m.setColorAt(0, new THREE.Color(1, 1, 1)); m.count = 0; m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; w.add(m); return m; };
+  // Put one instance of mesh at a position/rotation/scale relative to the current parent matrix
+  const put = (m, x, y, z, rx, ry, rz, sx, sy, sz, col) => {
+    o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.scale.set(sx, sy, sz); o.updateMatrix();
+    local.multiplyMatrices(parent, o.matrix); m.setMatrixAt(m.count, local); m.setColorAt(m.count++, col);
+  };
+  const white = lam({ color: 0xffffff });
+  // Cacti: a ribbed column with a round top, and up to two bent arms
+  const colGeo = new THREE.CylinderGeometry(.5, .55, 1, 9).translate(0, .5, 0), capGeo = new THREE.SphereGeometry(.5, 9, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  const cacti = spots.length, col = make(colGeo, white, cacti * 5), cap = make(capGeo, white, cacti * 3), elbow = make(new THREE.SphereGeometry(.5, 8, 6), white, cacti * 2);
+  for (const [x, z, y] of spots) {
+    const s = .8 + rnd() * .7, h = 4 + rnd() * 3.5;
+    parent.compose(new THREE.Vector3(x, y - .2, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.3), new THREE.Vector3(s, s, s));
+    tint.setHSL(.28 + rnd() * .06, .42 + rnd() * .15, .26 + rnd() * .08);
+    put(col, 0, 0, 0, 0, 0, 0, 1, h, 1, tint); put(cap, 0, h, 0, 0, 0, 0, 1, 1, 1, tint);
+    const arms = rnd() < .2 ? 0 : rnd() < .5 ? 1 : 2;
+    for (let a = 0; a < arms; a++) {
+      const side = a ? -1 : 1, ay = h * (.35 + rnd() * .25), out = 1.1 + rnd() * .4, up = 1.2 + rnd() * 1.5;
+      put(col, side * .35, ay, 0, 0, 0, -side * Math.PI / 2, .7, out, .7, tint);   // sideways bit
+      put(elbow, side * (out + .35), ay, 0, 0, 0, 0, .7, .7, .7, tint);
+      put(col, side * (out + .35), ay, 0, 0, 0, 0, .7, up, .7, tint);              // and up
+      put(cap, side * (out + .35), ay + up, 0, 0, 0, 0, .7, .7, .7, tint);
+    }
+  }
+  // Palm trees round the oasis: a leaning trunk of stacked segments and a crown of drooping fronds
+  if (POND) {
+    const PALMS = 11, seg = make(new THREE.CylinderGeometry(.32, .42, 1.6, 7).translate(0, .8, 0), lam({ color: 0x8a6a45 }), PALMS * 6);
+    const frondGeo = new THREE.ConeGeometry(.55, 5, 4).translate(0, 2.5, 0).scale(1, 1, .25), frond = make(frondGeo, lam({ color: 0xffffff, flatShading: true }), PALMS * 8);
+    const nut = make(new THREE.SphereGeometry(.28, 6, 5), lam({ color: 0x5a3b1e }), PALMS * 3);
+    for (let n = 0; n < PALMS; n++) {
+      const a = n / PALMS * Math.PI * 2 + rnd() * .3, r = POND.r + 3 + rnd() * 5, x = POND.x + Math.cos(a) * r, z = POND.z + Math.sin(a) * r;
+      if (nearestAny(x, z).d < WALL + 3) continue;
+      const lean = .12 + rnd() * .12, s = .9 + rnd() * .35;
+      // Lean out over the water
+      parent.compose(new THREE.Vector3(x, groundAt(x, z) - .2, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a), new THREE.Vector3(s, s, s));
+      let px = 0, py = 0;
+      for (let k = 0; k < 6; k++) { const ang = lean * (1 + k * .35); put(seg, px, py, 0, 0, 0, ang, 1 - k * .06, 1, 1 - k * .06, tint.setHSL(.08, .35, .32 + (k % 2) * .05)); px -= Math.sin(ang) * 1.6; py += Math.cos(ang) * 1.6; }
+      for (let f = 0; f < 8; f++) put(frond, px, py, 0, 0, f / 8 * Math.PI * 2 + rnd() * .3, 1.25 + rnd() * .35, 1, .9 + rnd() * .3, 1, tint.setHSL(.27 + rnd() * .06, .55, .28 + rnd() * .08));
+      for (let k = 0; k < 3; k++) put(nut, px + Math.cos(k * 2.1) * .35, py - .3, Math.sin(k * 2.1) * .35, 0, 0, 0, 1, 1, 1, tint.set(0xffffff));
+    }
+  }
+  // Red rock pillars beyond the wall, banded in two shades
+  const rock = make(new THREE.CylinderGeometry(.8, 1, 1, 7).translate(0, .5, 0), lam({ color: 0xffffff, flatShading: true }), 40);
+  for (let n = 0, tries = 0; n < 18 && tries < 800; tries++) {
+    const x = (rnd() - .5) * 500, z = (rnd() - .5) * 500, rr = 5 + rnd() * 9;
+    if (nearestAny(x, z).d < WALL + rr + 6 || nearStand(x, z) || (POND && Math.hypot(x - POND.x, z - POND.z) < POND.r + rr + 10)) continue;
+    const h = 14 + rnd() * 26, y = groundAt(x, z) - 1;
+    parent.compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.3), new THREE.Vector3(1, 1, 1));
+    put(rock, 0, 0, 0, 0, 0, 0, rr, h * .6, rr, tint.setHSL(.04, .55, .4));
+    put(rock, 0, h * .6, 0, 0, 0, 0, rr * .82, h * .4, rr * .82, tint.setHSL(.06, .5, .52));
+    n++;
+  }
+  // The arch: half a squashed ring of rock that spans the road on a straight, with both feet past the walls
+  const R = WALL + 7;
+  for (let k = 0; k < 60; k++) {
+    const i = wrapI(Math.round(N * .38) + k * 7);
+    let ok = true;
+    for (let j = -15; j <= 15 && ok; j++) if (Math.abs(kap[wrapI(i + j)]) > .008) ok = false;
+    const feet = [-1, 1].map(s => [cx[i] + nxOf(i) * s * R, cz[i] + nzOf(i) * s * R]);
+    if (!ok || feet.some(([x, z]) => nearestAny(x, z).d < WALL + 2 || nearStand(x, z))) continue;
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(R, 4.2, 9, 30, Math.PI), lam({ color: 0xc0653a, flatShading: true }));
+    arch.position.set(cx[i], Math.min(...feet.map(([x, z]) => groundAt(x, z))) - 2.5, cz[i]);
+    arch.rotation.y = Math.atan2(tx[i], tz[i]);   // local x runs across the road, like the start gantry
+    arch.scale.set(1, .62, 1.6);
+    arch.castShadow = true; arch.receiveShadow = true;
+    w.add(arch);
+    break;
   }
 }
 
@@ -2504,7 +2617,7 @@ function drawResults() {
 // ---------- Grand Prix ----------
 // All three tracks in a row. Points for every finishing place; the most points after the last race wins the cup.
 // Every new cup races the three tracks in a random order (in a room the host shuffles and tells everyone), so nobody picks.
-const GP_TRACKS = ['meadow', 'snow', 'city'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
+const GP_TRACKS = ['meadow', 'snow', 'city', 'desert'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
 let gp = null;
 function newGp() {
   const order = [...GP_TRACKS];
@@ -3059,7 +3172,7 @@ function drawTrackPicker() {
   document.querySelectorAll('#modes button').forEach(b => { b.disabled = guest; b.style.opacity = guest ? .55 : ''; });
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !locked && b.dataset.id === state.track); b.disabled = locked; b.style.opacity = locked ? .55 : ''; });
   $('gpNote').hidden = !cup || guest;
-  $('gpNote').textContent = `Race all three tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
+  $('gpNote').textContent = `Race all four tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
   // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow
   const snowy = !cup && TRACKS[state.track].theme === 'snow';
   document.querySelectorAll('#weather button').forEach(b => { b.textContent = snowy ? SNOW_WEATHER[b.dataset.id] : WEATHERS[b.dataset.id].label; });
