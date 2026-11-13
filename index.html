@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-13.3';
+const BUILD = '2026-11-13.4';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1935,6 +1935,9 @@ const ITEMS = {
 };
 // Mega kart: grow big and heavy for a while. Ram another kart to knock it aside and slow it down for a bit.
 const MEGA_TIME = 8, MEGA_SIZE = 1.7, SLOW_TIME = 2.5, SLOW_SPEED = .75;
+// How close (centre to centre) counts as a mega kart touching someone. Generous on purpose: a big kart is long, and
+// online the other kart is drawn slightly in the past, so just brushing it should count.
+const MEGA_REACH = 5.6;
 const ITEM_KEYS = Object.keys(ITEMS);
 // How likely each item is, from p = 0 (leading) to p = 1 (last)
 const ITEM_ODDS = {
@@ -2091,8 +2094,10 @@ function knock(k, nx, nz) {
     if (k.isPlayer) sound.sfx('pop');
     return;
   }
-  k.kx = nx * 13; k.kz = nz * 13; k.slowT = SLOW_TIME; k.v *= .7;
-  if (k.hopY === 0 && !k.air) { k.hopV = 4; k.hopY = .001; }
+  // Always shove sideways (away from the mega kart), so a hit from behind never pushes them forward
+  const rx = Math.cos(k.yaw), rz = -Math.sin(k.yaw), side = nx * rx + nz * rz >= 0 ? 1 : -1;
+  k.kx = rx * side * 17; k.kz = rz * side * 17; k.slowT = SLOW_TIME; k.v *= .7;
+  if (k.hopY === 0 && !k.air) { k.hopV = 5.5; k.hopY = .001; }
   k.drift = 0; k.driftT = 0;
   burst(k.x, k.y + .8, k.z, 18, [1, .8, .35]);
   if (k.isPlayer) { race.shake = .5; sound.sfx('bonk'); buzz([50, 30, 70]); }
@@ -2562,16 +2567,20 @@ function bumpKarts(h) {
     const a = list[i], b = list[j], dx = b.x - a.x, dz = b.z - a.z, d2 = dx * dx + dz * dz;
     // Mega karts are wider and much heavier, so they push everyone else aside
     const ra = a.megaT > 0 ? 1.35 * MEGA_SIZE : 1.35, rb = b.megaT > 0 ? 1.35 * MEGA_SIZE : 1.35, rr = ra + rb;
-    if (d2 > rr * rr || d2 === 0) continue;
+    if (d2 === 0) continue;
+    // A mega kart knocks whoever it touches (each browser only decides this for the karts it drives)
+    if ((a.megaT > 0) !== (b.megaT > 0) && d2 < MEGA_REACH * MEGA_REACH) {
+      const d = Math.sqrt(d2), nx = dx / d, nz = dz / d;
+      if (a.megaT > 0 && !b.remote) knock(b, nx, nz);
+      if (b.megaT > 0 && !a.remote) knock(a, -nx, -nz);
+    }
+    if (d2 > rr * rr) continue;
     const ma = a.mass * (a.megaT > 0 ? 5 : 1), mb = b.mass * (b.megaT > 0 ? 5 : 1);
     const d = Math.sqrt(d2), o = rr - d, sum = ma + mb;
     if (o <= 0) continue;
     const nx = dx / d, nz = dz / d;
     a.x -= nx * o * mb / sum; a.z -= nz * o * mb / sum;
     b.x += nx * o * ma / sum; b.z += nz * o * ma / sum;
-    // A mega kart knocks whoever it rams (each browser only decides this for the karts it drives)
-    if (a.megaT > 0 && b.megaT <= 0 && !b.remote) knock(b, nx, nz);
-    if (b.megaT > 0 && a.megaT <= 0 && !a.remote) knock(a, -nx, -nz);
     // A superstar flattens whoever it touches
     if (a.starT > 0 && b.starT <= 0 && !b.remote) hit(b);
     if (b.starT > 0 && a.starT <= 0 && !a.remote) hit(a);
