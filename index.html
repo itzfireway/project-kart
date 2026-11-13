@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.9';
+const BUILD = '2026-11-14.10';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1517,15 +1517,22 @@ function buildWorld() {
     beam.position.y = 9.6; beam.castShadow = true;
     gantry.add(beam);
     // Grandstand behind the outside of the start straight, with a crowd of coloured dots
+    // The ground under it can slope, so stand it at the highest point of its footprint and fill in underneath
+    // with a concrete base down to the lowest point, so no part of it floats
+    let gLo = 1e9, gHi = -1e9;
+    for (let a = -53; a <= 53; a += 4) for (let b = -18; b <= 3; b += 3) {
+      const x = standX + a * Math.cos(standRot) + b * Math.sin(standRot), z = standZ - a * Math.sin(standRot) + b * Math.cos(standRot), g = groundAt(x, z);
+      gLo = Math.min(gLo, g); gHi = Math.max(gHi, g);
+    }
     const stand = new THREE.Group();
-    stand.position.set(standX, groundAt(standX, standZ) - .3, standZ);
+    stand.position.set(standX, gHi - .2, standZ);
     stand.rotation.y = standRot;
     w.add(stand);
     const conc = lam({ color: 0xb4b6bc }), crowdGeo = new THREE.SphereGeometry(.42, 6, 5), crowd = new THREE.InstancedMesh(crowdGeo, lam({ color: 0xffffff }), 880), o = new THREE.Object3D(), cc = new THREE.Color();
     let n = 0;
     for (let row = 0; row < 8; row++) {
-      const step = new THREE.Mesh(new THREE.BoxGeometry(100, 1, 1.8), conc);
-      step.position.set(0, row * 1 + .5, -row * 1.8);
+      const step = new THREE.Mesh(new THREE.BoxGeometry(100, row + 1, 1.8), conc);   // solid down to the base, no gap under it
+      step.position.set(0, (row + 1) / 2, -row * 1.8);
       step.castShadow = true;
       stand.add(step);
       for (let a = 0; a < 110 && n < 880; a++, n++) {
@@ -1540,6 +1547,13 @@ function buildWorld() {
     const roof = new THREE.Mesh(new THREE.BoxGeometry(104, .5, 20), lam({ color: 0xd8261c }));
     roof.position.set(0, 14, -7); roof.rotation.x = -.08; roof.castShadow = true;
     stand.add(roof);
+    // Base under the steps, reaching below the lowest ground, and posts holding up the roof
+    const baseH = gHi - gLo + 2.5, base = new THREE.Mesh(new THREE.BoxGeometry(102, baseH, 17), conc);
+    base.position.set(0, .2 - baseH / 2, -6.5); base.receiveShadow = true; stand.add(base);
+    for (const px of [-50, -25, 0, 25, 50]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(.6, 14, .6), lam({ color: 0x8a8d96 }));
+      post.position.set(px, 7, -15.6); post.castShadow = true; stand.add(post);
+    }
   }
 
   // Trees past the wall
