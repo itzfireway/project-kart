@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.10';
+const BUILD = '2026-11-14.11';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1558,7 +1558,9 @@ function buildWorld() {
 
   // Trees past the wall
   const spots = [];
-  for (let tries = 0; tries < 9000 && spots.length < (CITY ? 0 : DESERT ? 420 : 620); tries++) {
+  // Frosty Peaks is a proper forest, so it gets a lot more (a bit fewer on phones)
+  const TREES = CITY ? 0 : DESERT ? 420 : SNOW ? (TOUCH ? 1000 : 1400) : 620;
+  for (let tries = 0; tries < 20000 && spots.length < TREES; tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
     if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z)) continue;
     spots.push([x, z, groundAt(x, z)]);
