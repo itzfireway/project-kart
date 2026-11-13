@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-13.2';
+const BUILD = '2026-11-13.3';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1931,12 +1931,15 @@ const ITEMS = {
   shield: { icon: '🛡️', name: 'Shield', uses: 1 },
   star: { icon: '⭐', name: 'Superstar', uses: 1 },
   zap: { icon: '⚡', name: 'Zap', uses: 1 },
+  mega: { icon: '💪', name: 'Mega kart', uses: 1 },
 };
+// Mega kart: grow big and heavy for a while. Ram another kart to knock it aside and slow it down for a bit.
+const MEGA_TIME = 8, MEGA_SIZE = 1.7, SLOW_TIME = 2.5, SLOW_SPEED = .75;
 const ITEM_KEYS = Object.keys(ITEMS);
 // How likely each item is, from p = 0 (leading) to p = 1 (last)
 const ITEM_ODDS = {
   turbo: p => 2 + 2 * p, triple: p => 3 * p * p, oil: p => 4.5 * (1 - p) + .4, rocket: p => .6 + 2.6 * p,
-  shield: p => 3 * (1 - p) + .5, star: p => 2.4 * p * p * p, zap: p => p > .7 ? 1.6 * p : 0,
+  shield: p => 3 * (1 - p) + .5, star: p => 2.4 * p * p * p, zap: p => p > .7 ? 1.6 * p : 0, mega: p => .7 + 1.8 * p,
 };
 
 function buildBlocks(w) {
@@ -2010,6 +2013,7 @@ function useItem(k) {
   if (kind === 'turbo' || kind === 'triple') k.boostT = Math.max(k.boostT, 1.4);
   else if (kind === 'shield') k.shieldT = 12;
   else if (kind === 'star') { k.starT = 7; k.boostT = Math.max(k.boostT, .6); }
+  else if (kind === 'mega') k.megaT = MEGA_TIME;
   else if (kind === 'oil') fire({ k: 'oil', slot: k.slot, x: k.x - Math.sin(k.yaw) * 2.9, z: k.z - Math.cos(k.yaw) * 2.9 });
   else if (kind === 'rocket') {
     const order = ranking(), at = order.indexOf(k), target = at > 0 ? order[at - 1] : null;
@@ -2075,6 +2079,24 @@ function hit(k) {
   k.spinT = SPIN; k.v *= .4; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0;
   if (k.isPlayer) { race.shake = .6; flash('hit'); sound.sfx('bonk'); buzz([60, 40, 90]); }
   return true;
+}
+
+// A mega kart rams k: it's shoved away (along nx, nz), hops a little, and is slowed for a couple of seconds
+function knock(k, nx, nz) {
+  if (k.knockCD > 0 || k.starT > 0 || k.megaT > 0 || k.finish !== null) return;
+  k.knockCD = 1;
+  if (k.shieldT > 0) {
+    k.shieldT = 0;
+    burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
+    if (k.isPlayer) sound.sfx('pop');
+    return;
+  }
+  k.kx = nx * 13; k.kz = nz * 13; k.slowT = SLOW_TIME; k.v *= .7;
+  if (k.hopY === 0 && !k.air) { k.hopV = 4; k.hopY = .001; }
+  k.drift = 0; k.driftT = 0;
+  burst(k.x, k.y + .8, k.z, 18, [1, .8, .35]);
+  if (k.isPlayer) { race.shake = .5; sound.sfx('bonk'); buzz([50, 30, 70]); }
+  else if (near(k, 60)) sound.sfx('thud', .7);
 }
 
 function burst(x, y, z, n, col) {
@@ -2184,7 +2206,7 @@ function makeRacer(name, opts, isPlayer) {
   return {
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
-    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0,
+    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0, megaT: 0, megaS: 1, slowT: 0, knockCD: 0, kx: 0, kz: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [],
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: BODIES[opts.body].grass ?? .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
@@ -2223,7 +2245,7 @@ function placeOnTrack(k, i, lat) {
   const j = wrapI(i), yaw = Math.atan2(tx[j], tz[j]);
   k.x = cx[j] + nxOf(j) * lat; k.z = cz[j] + nzOf(j) * lat; k.y = cy[j];
   k.yaw = k.moveYaw = yaw; k.idx = j; k.lat = lat; k.v = 0; k.drift = k.driftT = k.driftIn = 0; k.stuck = 0;
-  k.onRamp = null; k.air = false; k.tricked = false; k.hopY = 0; k.hopV = 0; k.flipKind = 0; k.flipAngle = 0; k.flipT = FLIP;
+  k.onRamp = null; k.air = false; k.tricked = false; k.hopY = 0; k.hopV = 0; k.kx = k.kz = 0; k.flipKind = 0; k.flipAngle = 0; k.flipT = FLIP;
 }
 
 function makeCPU(name, opts, i, level) {
@@ -2392,6 +2414,7 @@ function thinkCPU(k, h) {
     if (it === 'turbo' || it === 'triple') go = go && Math.abs(kap[wrapI(k.idx + Math.round(25 / DS))]) < .008;
     if (it === 'oil') go = go && (karts.some(o => o !== k && gapTo(o) < -2 && gapTo(o) > -30) || k.itemWait < -6);
     if (it === 'rocket') go = go && (karts.some(o => o !== k && gapTo(o) > 6 && gapTo(o) < 140) || k.itemWait < -6);
+    if (it === 'mega') go = go && (karts.some(o => o !== k && Math.abs(gapTo(o)) < 25) || k.itemWait < -6);
     if (go) { k.wantItem = true; k.itemWait = .5 + Math.random() * 1.2; }
   }
 }
@@ -2414,6 +2437,7 @@ function stepKart(k, h) {
     k.v -= k.v * 2.4 * h;
   }
   k.starT = Math.max(0, k.starT - h); k.shieldT = Math.max(0, k.shieldT - h); k.zapT = Math.max(0, k.zapT - h);
+  k.megaT = Math.max(0, k.megaT - h); k.slowT = Math.max(0, k.slowT - h); k.knockCD = Math.max(0, k.knockCD - h);
   if (k.roll > 0 && (k.roll -= h) <= 0 && k.isPlayer) sound.sfx('got');
   if (k.roll2 > 0 && (k.roll2 -= h) <= 0 && k.isPlayer) sound.sfx('got');
   shiftItems(k);
@@ -2422,7 +2446,7 @@ function stepKart(k, h) {
 
   // Drifting costs a little top speed (up to 8% once fully sideways). Speed pads lift your top speed to 115% for a
   // few seconds rather than kicking you forward, and once they wear off you ease back down to normal.
-  const top = k.top * (k.ai ? k.topMul * k.rubber : 1) * (onRoad || k.starT > 0 || k.hopY > .5 ? 1 : k.grass) * (k.boostT > 0 ? 1.3 : k.trickB > 0 ? TRICK_SPEED : 1) * (k.starT > 0 ? 1.15 : 1) * (k.zapT > 0 ? .72 : 1)
+  const top = k.top * (k.ai ? k.topMul * k.rubber : 1) * (onRoad || k.starT > 0 || k.hopY > .5 ? 1 : k.grass) * (k.boostT > 0 ? 1.3 : k.trickB > 0 ? TRICK_SPEED : 1) * (k.starT > 0 ? 1.15 : 1) * (k.zapT > 0 ? .72 : 1) * (k.slowT > 0 ? SLOW_SPEED : 1)
     * (k.padT > 0 ? PAD_SPEED : 1) * (k.drift ? 1 - .08 * smooth(0, 1, k.driftIn) : 1);
   const accel = k.accel * (k.boostT > 0 || k.starT > 0 ? 3 : k.trickB > 0 ? 2 : k.padT > 0 ? 1.8 : 1);
   if (k.throttle) k.v += k.v < top ? accel * (1.08 - Math.max(0, k.v) / top) * h : -(onRoad ? 7 : 12) * h;
@@ -2449,6 +2473,12 @@ function stepKart(k, h) {
 
   k.x += Math.sin(k.moveYaw) * k.v * h;
   k.z += Math.cos(k.moveYaw) * k.v * h;
+  // Shove from a mega kart, dying away quickly
+  if (k.kx || k.kz) {
+    k.x += k.kx * h; k.z += k.kz * h;
+    const f = Math.exp(-5 * h); k.kx *= f; k.kz *= f;
+    if (Math.abs(k.kx) + Math.abs(k.kz) < .05) k.kx = k.kz = 0;
+  }
 
   // The tyre wall holds you in and scrubs speed
   if (dist > WALL) {
@@ -2530,12 +2560,18 @@ function bumpKarts(h) {
   const list = race.karts;
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const a = list[i], b = list[j], dx = b.x - a.x, dz = b.z - a.z, d2 = dx * dx + dz * dz;
-    if (d2 > 7.3 || d2 === 0) continue;
-    const d = Math.sqrt(d2), o = 2.7 - d, sum = a.mass + b.mass;
+    // Mega karts are wider and much heavier, so they push everyone else aside
+    const ra = a.megaT > 0 ? 1.35 * MEGA_SIZE : 1.35, rb = b.megaT > 0 ? 1.35 * MEGA_SIZE : 1.35, rr = ra + rb;
+    if (d2 > rr * rr || d2 === 0) continue;
+    const ma = a.mass * (a.megaT > 0 ? 5 : 1), mb = b.mass * (b.megaT > 0 ? 5 : 1);
+    const d = Math.sqrt(d2), o = rr - d, sum = ma + mb;
     if (o <= 0) continue;
     const nx = dx / d, nz = dz / d;
-    a.x -= nx * o * b.mass / sum; a.z -= nz * o * b.mass / sum;
-    b.x += nx * o * a.mass / sum; b.z += nz * o * a.mass / sum;
+    a.x -= nx * o * mb / sum; a.z -= nz * o * mb / sum;
+    b.x += nx * o * ma / sum; b.z += nz * o * ma / sum;
+    // A mega kart knocks whoever it rams (each browser only decides this for the karts it drives)
+    if (a.megaT > 0 && b.megaT <= 0 && !b.remote) knock(b, nx, nz);
+    if (b.megaT > 0 && a.megaT <= 0 && !a.remote) knock(a, -nx, -nz);
     // A superstar flattens whoever it touches
     if (a.starT > 0 && b.starT <= 0 && !b.remote) hit(b);
     if (b.starT > 0 && a.starT <= 0 && !a.remote) hit(a);
@@ -2784,6 +2820,11 @@ function renderKart(k, dt) {
   // A spin-out turns the kart round twice, easing off so it ends facing the way it started
   const sp = k.spinT > 0 ? 1 - k.spinT / SPIN : 1, spinYaw = (1 - (1 - sp) ** 2) * Math.PI * 4;
   g.position.set(k.x, k.y + k.hopY + (k.spinT > 0 ? Math.sin(sp * Math.PI) * .5 : 0), k.z);
+  // Mega kart: grow with a little wobble, flicker between sizes as it's about to run out, then shrink back
+  const megaWant = k.megaT > 0 ? (k.megaT < 1.2 && Math.sin(race.t * 22) > 0 ? 1.25 : MEGA_SIZE) : 1;
+  k.megaS += (megaWant - k.megaS) * Math.min(1, dt * 7);
+  g.scale.setScalar(k.megaS * (k.megaT > MEGA_TIME - .5 ? 1 + Math.sin((MEGA_TIME - k.megaT) * 25) * .06 : 1));
+  k.bubble.scale.setScalar(k.megaS);
   g.rotation.set(k.pitch, k.yaw + k.slip + spinYaw + (k.flipKind === 2 ? k.flipAngle : 0), k.flipKind === 1 ? k.flipAngle : 0);
   k.view.update(dt, k.v, k.drift ? clamp(k.drift * .2 + k.steer * .8, -1, 1) : k.steer);
   if (k.tag) {
@@ -2801,13 +2842,14 @@ function renderKart(k, dt) {
     // Flicker when it is about to run out
     const left = k.starT > 0 ? k.starT : k.shieldT;
     b.material.opacity = left < 1.5 && Math.sin(race.t * 30) > 0 ? .1 : k.starT > 0 ? .38 : .28;
-    b.scale.setScalar(1 + Math.sin(race.t * 6) * .03);
+    b.scale.setScalar(k.megaS * (1 + Math.sin(race.t * 6) * .03));
   }
 
   const you = race.you, near = Math.abs(k.x - you.x) + Math.abs(k.z - you.z) < 90;
   if (!near) return;
   const sin = Math.sin(k.yaw), cos = Math.cos(k.yaw), rx = k.x - sin * 1.1, rz = k.z - cos * 1.1;
   if (k.starT > 0 && Math.random() < .7) { const c = new THREE.Color().setHSL(Math.random(), 1, .6); spark(k.x + (Math.random() - .5) * 2.4, k.y + Math.random() * 1.8, k.z + (Math.random() - .5) * 2.4, 0, 1.5, 0, .5, c.r, c.g, c.b); }
+  if (k.slowT > 0 && Math.random() < .35) spark(k.x + (Math.random() - .5) * 1.4, k.y + 1.9, k.z + (Math.random() - .5) * 1.4, (Math.random() - .5) * 2, 1, (Math.random() - .5) * 2, .5, .9, .75, .3, 2);
   if (k.spinT > 0 && Math.random() < .6) spark(k.x, k.y + 1.6, k.z, (Math.random() - .5) * 3, 2, (Math.random() - .5) * 3, .5, 1, .95, .3, 4);
   if (k.drift && Math.random() < .8) {
     const blue = k.driftT > .75, hot = k.driftT > 1.7, s = Math.random() < .5 ? -1 : 1;
@@ -2822,7 +2864,7 @@ function placeRaceCam(dt) {
   const r = race, k = r.you;
   r.camYaw += wrapA(k.moveYaw - r.camYaw) * Math.min(1, dt * 5.5);
   if (r.over) r.camYaw += dt * .55;
-  const back = r.over ? 9 : 7.4 + Math.abs(k.v) * .03, up = r.over ? 3.2 : 3.3;
+  const big = (k.megaS || 1) - 1, back = r.over ? 9 : 7.4 + Math.abs(k.v) * .03 + big * 4.5, up = r.over ? 3.2 : 3.3 + big * 2.2;
   const wantX = k.x - Math.sin(r.camYaw) * back, wantZ = k.z - Math.cos(r.camYaw) * back;
   const q = Math.min(1, dt * 14);
   r.camX += (wantX - r.camX) * q; r.camZ += (wantZ - r.camZ) * q;
@@ -3005,6 +3047,8 @@ const sound = (() => {
     rocket: v => { hiss(.5, { vol: .12 * v, f0: 2000, f1: 500 }); tone(300, .4, { type: 'sawtooth', vol: .03 * v, slide: 900 }); },
     shield: v => tone(400, .35, { type: 'sine', vol: .08 * v, slide: 1200 }),
     star: v => notes([784, 988, 1175, 1568], .06, { vol: .045 * v, type: 'triangle' }),
+    mega: v => notes([196, 262, 330, 392, 523], .07, { vol: .05 * v, type: 'square' }),
+    thud: v => { tone(160, .3, { type: 'sine', vol: .12 * v, slide: 50 }); hiss(.2, { vol: .14 * v, f0: 700, f1: 120, type: 'lowpass' }); },
     zap: v => { hiss(.5, { vol: .18 * v, f0: 4000, f1: 200 }); tone(1800, .5, { type: 'sawtooth', vol: .05 * v, slide: 80 }); },
     pop: v => tone(1400, .15, { type: 'sine', vol: .08 * v, slide: 300 }),
     bonk: v => { tone(420, .4, { vol: .07 * v, slide: 90 }); hiss(.25, { vol: .12 * v, f0: 900, f1: 200 }); },
@@ -3760,9 +3804,9 @@ function netFinished(k) {
   else netToHost({ t: 'fin' });
 }
 
-const SNAP_LEN = 18;
+const SNAP_LEN = 19;
 function netSnapshot(k) {
-  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind];
+  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2)];
 }
 function netStore(k, snap) {
   if (!k?.remote || !Array.isArray(snap) || snap.length !== SNAP_LEN || !snap.every(Number.isFinite)) return;
@@ -3793,7 +3837,7 @@ function netInterpolate() {
     k.v = mix(5); k.steer = mix(6); k.drift = b[7]; k.driftT = b[8]; k.driftIn = k.drift ? Math.min(1, k.driftIn + .04) : 0;
     k.boostT = b[9]; k.hopY = Math.max(0, mix(10)); k.pitch = mix(11); k.total = b[12];
     k.spinT = clamp(b[13], 0, SPIN); k.starT = clamp(b[14], 0, 10); k.shieldT = clamp(b[15], 0, 15);
-    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2);
+    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME);
     // A short gap in the connection: keep rolling rather than stop dead
     const late = clamp(when - list[list.length - 1].at, 0, COAST_MS) / 1000;
     if (i === list.length - 1 && late > 0) { k.x += Math.sin(k.yaw) * k.v * late; k.z += Math.cos(k.yaw) * k.v * late; }
