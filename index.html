@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.5';
+const BUILD = '2026-11-14.6';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -982,12 +982,14 @@ const TRACKS = {
     ramps: [[14, 4.5], [445, -4.5], [620, 4.5]], pads: [[62, 0], [300, 4], [560, -4], [842, 3]], blocks: [150, 420, 700, 975],
   },
   snow: {
-    name: 'Frosty Peaks', icon: '❄️', blurb: 'Snowy pines, a frozen lake and a big climb', theme: 'snow', pond: { x: -10, z: 110, r: 30 },
+    name: 'Frosty Peaks', icon: '❄️', blurb: 'A twisty mountain loop, a long run downhill and hairpins round a frozen lake', theme: 'snow', pond: { x: 35, z: 10, r: 26 },
     pts: [
-      [0, -150, 0], [110, -150, 1], [172, -118, 3], [184, -45, 7], [140, 10, 11], [70, 8, 13], [22, 42, 14], [52, 104, 12],
-      [128, 104, 10], [176, 140, 8], [150, 188, 6], [70, 194, 5], [-50, 186, 4], [-118, 160, 4], [-150, 100, 6], [-96, 40, 8],
-      [-62, -10, 8], [-110, -48, 6], [-170, -60, 4], [-188, -118, 2], [-128, -152, 0],
+      [-30, -167, 0], [-110, -150, 1], [-165, -132, 2], [-192, -92, 3], [-180, -42, 4], [-130, -36, 5], [-100, -64, 6], [-66, -88, 7],
+      [-34, -66, 8], [-50, -16, 9], [-80, 22, 10], [-62, 62, 11], [-14, 84, 11], [30, 126, 12], [80, 160, 12], [140, 172, 12],
+      [182, 152, 12], [186, 104, 11], [146, 84, 11], [114, 56, 10], [126, 20, 9], [174, 6, 8], [190, -36, 7], [166, -76, 6],
+      [118, -70, 5], [76, -86, 4], [62, -128, 3], [54, -160, 2], [20, -172, 1],
     ],
+    pads: [[249, 0], [518, 4], [605, -4], [45, -4]],   // the first pad sits beside the first ramp, not on it
   },
   city: {
     name: 'Neon City', icon: '🌃', blurb: 'Night streets, winding esses and a twisty zig-zag through the middle', theme: 'city', pond: null,
