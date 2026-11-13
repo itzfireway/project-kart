@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-13.1';
+const BUILD = '2026-11-13.2';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -905,6 +905,7 @@ const q = new URLSearchParams(location.search);
 // How wet each weather is: 0 is clear sky, 1 is a full thunderstorm
 const WEATHERS = { sunny: { label: '☀️ Sunny', wet: 0 }, rainy: { label: '🌧️ Rainy', wet: .6 }, thunder: { label: '⛈️ Thunder', wet: 1 } };
 const SNOW_WEATHER = { sunny: '☀️ Sunny', rainy: '🌨️ Snowy', thunder: '❄️ Heavy snow' };
+const SAND_WEATHER = { sunny: '☀️ Sunny', rainy: '💨 Windy', thunder: '🌪️ Sandstorm' };
 const ZAP_RAIN = 9;   // seconds of rain after someone uses a zap
 const state = {
   body: BODIES[q.get('body')] ? q.get('body') : 'sprint',
@@ -1164,7 +1165,7 @@ const THEMES = {
   },
   desert: {
     ground: [0xd6a565, 0xe7c085], edge: 0xb7814f, shore: 0x7f9a44, outer: 0xd3a264, kerb: ['#e2452a', '#f6f1e6'], wall: ['#e0792a', '#f4ead8'],
-    skyTop: 0x3478cc, skyHor: 0xf5d9b0, field: 0xd8ad70, fog: [0xf0d3a8, 190, 920], fogStorm: 0x8f7458, skyStorm: [.58, .5, .44], cloud: [1, .96, .9],
+    skyTop: 0x3478cc, skyHor: 0xf5d9b0, field: 0xd8ad70, fog: [0xf0d3a8, 190, 920], fogStorm: 0xc08a52, skyStorm: [1.05, .72, .45], cloud: [1, .96, .9], stormCloud: 0xa8784a, fogCut: [.92, .86],
     hemi: [0xfff0d8, 0xb8865a, .66], sun: [0xffe6c2, 1.12],
   },
 };
@@ -1570,7 +1571,7 @@ function buildWorld() {
     w.add(s);
   }
   // Heavy, low storm clouds that only show up when it rains
-  const stormMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: 0, color: 0x3c424c });
+  const stormMat = new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: 0, color: LOOK.stormCloud ?? 0x3c424c });
   const storm = new THREE.Group();
   for (let i = 0; i < 34; i++) {
     const s = new THREE.Sprite(stormMat), a = rnd() * 6.3, r = 120 + rnd() * 560;
@@ -1668,14 +1669,17 @@ function buildWorld() {
   w.add(rain);
 
   // Snow track: falling flakes, always a few and more when the weather turns
+  // Desert: grains of sand whipped sideways by the wind, only when it's windy
   let flakes = null;
-  if (SNOW) {
-    const n = TOUCH ? 1400 : 3500, pos = new Float32Array(n * 3).fill(-999), g = new THREE.BufferGeometry();
+  if (SNOW || DESERT) {
+    const n = DESERT ? (TOUCH ? 2600 : 7000) : TOUCH ? 1600 : 4200, pos = new Float32Array(n * 3).fill(-999), g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: .32, map: dot, color: 0xffffff, transparent: true, depthWrite: false, opacity: .95 }));
+    const pts = new THREE.Points(g, new THREE.PointsMaterial(DESERT
+      ? { size: .24, map: dot, color: 0xa86f38, transparent: true, depthWrite: false, opacity: 1 }
+      : { size: .32, map: dot, color: 0xffffff, transparent: true, depthWrite: false, opacity: .95 }));
     pts.frustumCulled = false;
     w.add(pts);
-    flakes = { pts, pos, g, n };
+    flakes = { pts, pos, g, n, sand: DESERT };
   }
   if (SNOW) buildSnowmen(w, rnd, nearStand);
   if (CITY) buildCity(w, rnd, nearStand, lam, size);
@@ -1684,7 +1688,7 @@ function buildWorld() {
   buildRamps(w);
   const look = {
     sky: new THREE.Color(1, 1, 1), skyStorm: new THREE.Color(...LOOK.skyStorm), cloud: new THREE.Color(...LOOK.cloud),
-    fog: new THREE.Color(LOOK.fog[0]), fogStorm: new THREE.Color(LOOK.fogStorm), fogNear: LOOK.fog[1], fogFar: LOOK.fog[2], sun: LOOK.sun[1], hemi: LOOK.hemi[2],
+    fog: new THREE.Color(LOOK.fog[0]), fogStorm: new THREE.Color(LOOK.fogStorm), fogNear: LOOK.fog[1], fogFar: LOOK.fog[2], fogCut: LOOK.fogCut || [.72, .62], sun: LOOK.sun[1], hemi: LOOK.hemi[2],
   };
   world = { track: TRACK_ID, look, flakes, scene: w, sun, sunGlow, ripple, padTex, skyMat, cloudMat, stormMat, storm, hemi, road, rain, dropPos, dropGeo, DROPS, wet: 0, bolt: 0, nextBolt: 6, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
 }
@@ -2872,12 +2876,34 @@ function stepWeather(dt) {
   W.storm.visible = dark > .01;
   W.storm.position.set(raceCam.position.x, 0, raceCam.position.z);
   W.scene.fog.color.copy(L.fog).lerp(L.fogStorm, dark);
-  W.scene.fog.near = L.fogNear * (1 - .72 * dark); W.scene.fog.far = L.fogFar * (1 - .62 * dark);
+  W.scene.fog.near = L.fogNear * (1 - L.fogCut[0] * dark); W.scene.fog.far = L.fogFar * (1 - L.fogCut[1] * dark);
   W.sun.intensity = L.sun * (1 - (.57 + .29 * storm) * dark) + W.bolt * 1.4;
   W.hemi.intensity = L.hemi * (1 - (.24 + .35 * storm) * dark) + W.bolt * 1.1;
   W.sunGlow.material.opacity = 1 - dark;
-  W.road.roughness = .9 - .55 * dark;
-  W.road.envMapIntensity = .4 + .5 * dark;
+  const sand = W.flakes?.sand;
+  W.road.roughness = sand ? .9 : .9 - .55 * dark;   // sand doesn't make the road shiny
+  W.road.envMapIntensity = sand ? .4 : .4 + .5 * dark;
+  // Sand: nothing on a calm day, drifting grains when windy, a wall of blowing sand in a sandstorm, with wind noise
+  if (sand) {
+    sound.rain(0, Math.min(1, wet * 1.1));
+    W.rain.visible = false;
+    const f = W.flakes, n = Math.round(f.n * (wet <= .6 ? .45 * wet / .6 : .45 + .55 * (wet - .6) / .4)), c = raceCam.position, t = performance.now() / 1000;
+    const gust = 1 + .35 * Math.sin(t * .9) + .2 * Math.sin(t * 2.3), blow = (6 + wet * 34) * gust * dt;
+    f.g.setDrawRange(0, n);
+    for (let i = 0; i < n; i++) {
+      const o = i * 3;
+      let x = f.pos[o] + blow * (.7 + (i % 7) * .08), y = f.pos[o + 1] + Math.sin(t * 2 + i) * 1.5 * dt - .4 * dt, z = f.pos[o + 2] + blow * .35 + Math.cos(t * 1.7 + i * .3) * dt;
+      if (y < c.y - 6 || y > c.y + 20 || Math.abs(x - c.x) > 36 || Math.abs(z - c.z) > 36) {
+        // Come back in on the upwind side, so the sand keeps streaming past
+        const edge = Math.abs(x - c.x) > 36 || Math.abs(z - c.z) > 36;
+        x = edge ? c.x - 34 - Math.random() * 2 : c.x + (Math.random() - .5) * 70; y = c.y - 4 + Math.random() * 16; z = c.z + (Math.random() - .5) * 70;
+        if (edge && Math.random() < .3) { x = c.x + (Math.random() - .5) * 70; z = c.z - 34; }
+      }
+      f.pos[o] = x; f.pos[o + 1] = y; f.pos[o + 2] = z;
+    }
+    f.g.attributes.position.needsUpdate = true;
+    return;
+  }
   // Snow falls quietly instead of rain: a light flurry always, a blizzard in a storm
   if (W.flakes) {
     sound.rain(0);
@@ -3028,7 +3054,7 @@ const sound = (() => {
       rn.buffer = noiseBuf; rn.loop = true; rf.type = 'bandpass'; rf.Q.value = .4; rf.frequency.value = 2600; rg.gain.value = 0;
       rn.connect(rf); rf.connect(rg); rg.connect(master);
       a.start(); b.start(); scr.start(); rn.start();
-      eng = { a, b, f, g, scr, sf, sg, rn, rg };
+      eng = { a, b, f, g, scr, sf, sg, rn, rf, rg };
     },
     stop() {
       if (eng) { for (const n of [eng.a, eng.b, eng.scr, eng.rn]) n.stop(); eng = null; }
@@ -3045,7 +3071,20 @@ const sound = (() => {
       music.gain.gain.setTargetAtTime(0, now(), .1);
       music = null;
     },
-    rain(wet) { if (eng) eng.rg.gain.setTargetAtTime(wet * .09, now(), .3); },
+    // Rain is a bright hiss; wind (the desert) is the same noise filtered low, with its pitch rising and falling in gusts
+    rain(wet, wind = 0) {
+      if (!eng) return;
+      const t = now();
+      if (wind > 0) {
+        eng.rf.Q.setTargetAtTime(2.5, t, .3);
+        eng.rf.frequency.setTargetAtTime(380 + 260 * wind + 160 * Math.sin(t * .9) + 80 * Math.sin(t * 2.3), t, .4);
+        eng.rg.gain.setTargetAtTime(wind * .16, t, .4);
+      } else {
+        eng.rf.Q.setTargetAtTime(.4, t, .3);
+        eng.rf.frequency.setTargetAtTime(2600, t, .3);
+        eng.rg.gain.setTargetAtTime(wet * .09, t, .3);
+      }
+    },
     // A crack, then a long low rumble, a moment after the flash
     thunder(delay) {
       if (!ctx) return;
@@ -3173,9 +3212,10 @@ function drawTrackPicker() {
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !locked && b.dataset.id === state.track); b.disabled = locked; b.style.opacity = locked ? .55 : ''; });
   $('gpNote').hidden = !cup || guest;
   $('gpNote').textContent = `Race all four tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
-  // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow
-  const snowy = !cup && TRACKS[state.track].theme === 'snow';
-  document.querySelectorAll('#weather button').forEach(b => { b.textContent = snowy ? SNOW_WEATHER[b.dataset.id] : WEATHERS[b.dataset.id].label; });
+  // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow. In Canyon Run it never
+  // rains: the wind picks up sand instead, and a thunderstorm becomes a sandstorm.
+  const th = !cup && TRACKS[state.track].theme, names = th === 'snow' ? SNOW_WEATHER : th === 'desert' ? SAND_WEATHER : null;
+  document.querySelectorAll('#weather button').forEach(b => { b.textContent = names ? names[b.dataset.id] : WEATHERS[b.dataset.id].label; });
 }
 Object.entries(MODES).forEach(([key, label]) => {
   const btn = document.createElement('button');
