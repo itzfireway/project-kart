@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.1';
+const BUILD = '2026-11-14.2';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1007,6 +1007,8 @@ const TRACKS = {
       [114, -12, 4], [78, 4, 4], [62, 38, 3], [88, 68, 3], [128, 64, 3], [158, 54, 2], [184, 74, 2], [184, 118, 1],
       [160, 156, 1], [101, 160, 0],
     ],
+    // Just two ramps here; pads keep the spots they had when three ramps were placed automatically
+    ramps: [[440, -4.5], [726, 4.5]], pads: [[232, 0], [369, 4], [697, -4], [45, 3]],
   },
 };
 const TRACK_IDS = Object.keys(TRACKS);
