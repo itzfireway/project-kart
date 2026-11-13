@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.6';
+const BUILD = '2026-11-14.7';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1024,6 +1024,7 @@ const CPU_NAMES = ['Turbo', 'Nitro', 'Pixel', 'Rusty', 'Zippy', 'Comet', 'Blaze'
 const cx = new Float32Array(N), cy = new Float32Array(N), cz = new Float32Array(N);   // centre line
 const tx = new Float32Array(N), tz = new Float32Array(N);                              // direction of travel
 const kap = new Float32Array(N), vmax = new Float32Array(N);                           // signed curvature, safe CPU speed
+const LIM_L = new Float32Array(N), LIM_R = new Float32Array(N);                        // how far out the barrier sits, left and right
 let DS = 1, TRACK = null, TRACK_ID = '', POND = null, RAMPS = [], PADS = [], BLOCK_ROWS = [];
 const nxOf = i => tz[i], nzOf = i => -tx[i];   // unit vector to the left of the track at sample i
 const wrapI = i => ((i % N) + N) % N;
@@ -1052,6 +1053,34 @@ function loadTrack(id) {
     raw[i] = (tx[b] * tz[a] - tz[b] * tx[a]) / (DS * 8);
   }
   for (let i = 0; i < N; i++) { let s = 0; for (let j = -10; j <= 10; j++) s += raw[wrapI(i + j)]; kap[i] = s / 21; }
+  // The barrier normally sits WALL out from the centre. Where another part of the track runs close by it moves in to
+  // halfway between the two, and on the inside of a tight bend it stays short of the bend's centre, so it is one
+  // unbroken line on both sides that never folds over itself. The physics uses the same line.
+  {
+    const lim = [new Float32Array(N).fill(WALL), new Float32Array(N).fill(WALL)], far2 = (2 * WALL + 4) ** 2;
+    for (let i = 0; i < N; i++) {
+      const nx = nxOf(i), nz = nzOf(i);
+      for (let j = 0; j < N; j++) {
+        if (Math.min(wrapI(i - j), wrapI(j - i)) < 3) continue;
+        const dx = cx[j] - cx[i], dz = cz[j] - cz[i], d2 = dx * dx + dz * dz;
+        if (d2 > far2) continue;
+        const dot = dx * nx + dz * nz;
+        if (Math.abs(dot) < 1e-3) continue;
+        // Equidistant from here and sample j. Against far-off road that's halfway between; against this same bend
+        // it works out as the bend's radius, so the barrier never reaches the bend's centre.
+        // Same bend: stop at 3/4 of its radius so the barrier rounds the inside instead of meeting in a point
+        const local = Math.min(wrapI(i - j), wrapI(j - i)) * DS < 45;
+        const L = d2 / (2 * Math.abs(dot)) * (local ? .75 : 1) - 1.2, side = dot > 0 ? 0 : 1;
+        if (L < lim[side][i]) lim[side][i] = L;
+      }
+    }
+    // Spread each pinch along the road (min over a window, then average) so the barrier bends smoothly into it
+    [LIM_L, LIM_R].forEach((out, side) => {
+      const m = new Float32Array(N), src = lim[side];
+      for (let i = 0; i < N; i++) { let v = WALL; for (let k = -7; k <= 7; k++) v = Math.min(v, src[wrapI(i + k)]); m[i] = v; }
+      for (let i = 0; i < N; i++) { let v = 0; for (let k = -4; k <= 4; k++) v += m[wrapI(i + k)]; out[i] = Math.max(HW + 2.5, Math.min(src[i] + 2, v / 9)); }
+    });
+  }
   // Corner speed from curvature, then a backwards pass so CPUs brake before the corner rather than in it
   for (let i = 0; i < N; i++) vmax[i] = Math.min(46, 1.02 / Math.max(.001, Math.abs(kap[i])));
   for (let n = 0; n < N * 2; n++) { const i = wrapI(-n), j = wrapI(i + 1); vmax[i] = Math.min(vmax[i], Math.sqrt(vmax[j] ** 2 + 2 * 15 * DS)); }
@@ -1339,7 +1368,7 @@ function buildWorld() {
   const padMat = new THREE.MeshBasicMaterial({ map: padTex, toneMapped: false });
   for (const pad of PADS) ribbon(pad.i, pad.i + pad.len, pad.lat + 3.2, pad.lat - 3.2, .05, padMat, 3, w);
 
-  // Tyre wall along the run-off limit, skipped wherever it would fold through the inside of a corner
+  // Tyre wall along the run-off limit (LIM_L / LIM_R), unbroken all the way round on both sides
   // Tyres in the countryside; in the city, glowing neon barriers
   const wallTex = CITY ? canvasTex(64, 16, (x, W, H) => {
     x.fillStyle = '#101018'; x.fillRect(0, 0, W, H);
@@ -1349,16 +1378,13 @@ function buildWorld() {
   }) : canvasTex(64, 16, (x, W, H) => { for (let i = 0; i < 4; i++) { x.fillStyle = i % 2 ? LOOK.wall[1] : LOOK.wall[0]; x.fillRect(i * W / 4, 0, W / 4, H); } });
   const wallPos = [], wallUv = [], wallIdx = [];
   for (const s of [-1, 1]) {
-    let prev = null;
+    const lim = s > 0 ? LIM_L : LIM_R;
     for (let i = 0; i <= N; i += 3) {
-      const j = i % N, x = cx[j] + nxOf(j) * s * (WALL + .6), z = cz[j] + nzOf(j) * s * (WALL + .6), ok = nearestAny(x, z).d > WALL - 1.5;
-      if (ok) {
-        const y = groundAt(x, z) - .2, b = wallPos.length / 3;
-        wallPos.push(x, y, z, x, y + 1.5, z);
-        wallUv.push(i * .08, 0, i * .08, 1);
-        if (prev !== null && prev === i - 3) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
-        prev = i;
-      } else prev = null;
+      const j = i % N, off = lim[j] + .6, x = cx[j] + nxOf(j) * s * off, z = cz[j] + nzOf(j) * s * off;
+      const y = groundAt(x, z) - .2, b = wallPos.length / 3;
+      wallPos.push(x, y, z, x, y + 1.5, z);
+      wallUv.push(i * .08, 0, i * .08, 1);
+      if (i) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
     }
   }
   const wallGeo = new THREE.BufferGeometry();
@@ -2494,8 +2520,9 @@ function stepKart(k, h) {
   }
 
   // The tyre wall holds you in and scrubs speed
-  if (dist > WALL) {
-    const i = k.idx, push = (dist - WALL) / dist;
+  const lim = k.lat >= 0 ? LIM_L[k.idx] : LIM_R[k.idx];
+  if (dist > lim) {
+    const i = k.idx, push = (dist - lim) / dist;
     k.x -= (k.x - cx[i]) * push; k.z -= (k.z - cz[i]) * push;
     k.v *= 1 - 2.2 * h;
   }
