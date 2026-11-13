@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.8';
+const BUILD = '2026-11-14.9';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1053,34 +1053,7 @@ function loadTrack(id) {
     raw[i] = (tx[b] * tz[a] - tz[b] * tx[a]) / (DS * 8);
   }
   for (let i = 0; i < N; i++) { let s = 0; for (let j = -10; j <= 10; j++) s += raw[wrapI(i + j)]; kap[i] = s / 21; }
-  // The barrier normally sits WALL out from the centre. Where another part of the track runs close by it moves in to
-  // halfway between the two, and on the inside of a tight bend it stays short of the bend's centre, so it is one
-  // unbroken line on both sides that never folds over itself. The physics uses the same line.
-  {
-    const lim = [new Float32Array(N).fill(WALL), new Float32Array(N).fill(WALL)], far2 = (2 * WALL + 4) ** 2;
-    for (let i = 0; i < N; i++) {
-      const nx = nxOf(i), nz = nzOf(i);
-      for (let j = 0; j < N; j++) {
-        if (Math.min(wrapI(i - j), wrapI(j - i)) < 3) continue;
-        const dx = cx[j] - cx[i], dz = cz[j] - cz[i], d2 = dx * dx + dz * dz;
-        if (d2 > far2) continue;
-        const dot = dx * nx + dz * nz;
-        if (Math.abs(dot) < 1e-3) continue;
-        // Equidistant from here and sample j. Against far-off road that's halfway between; against this same bend
-        // it works out as the bend's radius, so the barrier never reaches the bend's centre.
-        // Same bend: stop at 3/4 of its radius so the barrier rounds the inside instead of meeting in a point
-        const local = Math.min(wrapI(i - j), wrapI(j - i)) * DS < 45;
-        const L = d2 / (2 * Math.abs(dot)) * (local ? .75 : 1) - 1.2, side = dot > 0 ? 0 : 1;
-        if (L < lim[side][i]) lim[side][i] = L;
-      }
-    }
-    // Spread each pinch along the road (min over a window, then average) so the barrier bends smoothly into it
-    [LIM_L, LIM_R].forEach((out, side) => {
-      const m = new Float32Array(N), src = lim[side];
-      for (let i = 0; i < N; i++) { let v = WALL; for (let k = -7; k <= 7; k++) v = Math.min(v, src[wrapI(i + k)]); m[i] = v; }
-      for (let i = 0; i < N; i++) { let v = 0; for (let k = -4; k <= 4; k++) v += m[wrapI(i + k)]; out[i] = Math.max(HW + 2.5, Math.min(src[i] + 2, v / 9)); }
-    });
-  }
+  buildBarriers();
   // Corner speed from curvature, then a backwards pass so CPUs brake before the corner rather than in it
   for (let i = 0; i < N; i++) vmax[i] = Math.min(46, 1.02 / Math.max(.001, Math.abs(kap[i])));
   for (let n = 0; n < N * 2; n++) { const i = wrapI(-n), j = wrapI(i + 1); vmax[i] = Math.min(vmax[i], Math.sqrt(vmax[j] ** 2 + 2 * 15 * DS)); }
@@ -1099,6 +1072,119 @@ function loadTrack(id) {
   };
   RAMPS = (TRACK.ramps || [[.05, 4.5], [.4, -4.5], [.66, 4.5]].map(([f, lat]) => [straight(f, 40), lat])).map(([i, lat]) => ({ i, lat, len: 7, hw: 3.6, h: 1.8 }));
   PADS = (TRACK.pads || [[.1, 0], [.3, 4], [.55, -4], [.8, 3]].map(([f, lat]) => [straight(f, 22), lat])).map(([i, lat]) => ({ i, lat, len: 16 }));
+}
+// The barrier on each side of the road, as a smooth closed line (BAR_L / BAR_R, x,z pairs, one point per sample).
+// 1. It wants to sit WALL out from the centre, but where another part of the track runs close by it comes in to
+//    halfway between the two.
+// 2. On the inside of a bend that's too tight for that, the line would fold back over itself; those points are
+//    dropped and the gap bridged.
+// 3. The line is then smoothed (without shrinking it) while being kept at least BAR_MIN from the road's centre.
+// LIM_L / LIM_R are where that line crosses each sample's sideways direction, which the physics pushes back at.
+const BAR_MIN = HW + 5;
+const BAR_L = new Float32Array(N * 2), BAR_R = new Float32Array(N * 2);
+function buildBarriers() {
+  // A grid of centre-line samples for "how close is the nearest bit of road" checks
+  const CELLW = 8, grid = new Map(), key = (a, b) => a * 4096 + b;
+  for (let j = 0; j < N; j++) {
+    const k = key(Math.floor(cx[j] / CELLW), Math.floor(cz[j] / CELLW));
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(j);
+  }
+  const nearest = (x, z, r) => {   // closest sample within r (or r itself if none is that close)
+    let best = r * r, bj = -1;
+    const a0 = Math.floor((x - r) / CELLW), a1 = Math.floor((x + r) / CELLW), b0 = Math.floor((z - r) / CELLW), b1 = Math.floor((z + r) / CELLW);
+    for (let a = a0; a <= a1; a++) for (let b = b0; b <= b1; b++) {
+      const cell = grid.get(key(a, b));
+      if (cell) for (const j of cell) { const dx = x - cx[j], dz = z - cz[j], d = dx * dx + dz * dz; if (d < best) { best = d; bj = j; } }
+    }
+    return { j: bj, d: Math.sqrt(best) };
+  };
+  const far2 = (2 * WALL + 4) ** 2, near = Math.round(45 / DS);
+  [[BAR_L, LIM_L, 1], [BAR_R, LIM_R, -1]].forEach(([bar, lim, s]) => {
+    // 1. How far out: WALL, or halfway to a different part of the track on this side
+    const want = new Float32Array(N).fill(WALL);
+    for (let i = 0; i < N; i++) {
+      const nx = s * nxOf(i), nz = s * nzOf(i);
+      for (let j = 0; j < N; j++) {
+        if (Math.min(wrapI(i - j), wrapI(j - i)) < near) continue;
+        const dx = cx[j] - cx[i], dz = cz[j] - cz[i], d2 = dx * dx + dz * dz;
+        if (d2 > far2) continue;
+        const dot = dx * nx + dz * nz;
+        if (dot > 1e-3) want[i] = Math.min(want[i], d2 / (2 * dot) - 1.2);   // equidistant from here and there
+      }
+    }
+    // Ease into each pinch over a good stretch of road
+    const m = new Float32Array(N);
+    for (let i = 0; i < N; i++) { let v = WALL; for (let k = -12; k <= 12; k++) v = Math.min(v, want[wrapI(i + k)]); m[i] = v; }
+    for (let i = 0; i < N; i++) { let v = 0; for (let k = -8; k <= 8; k++) v += m[wrapI(i + k)]; want[i] = Math.min(want[i] + 1, v / 17); }
+    // 2. Offset line; points that end up nearer some other bit of road than they should are inside a fold
+    const px = new Float32Array(N), pz = new Float32Array(N), ok = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      px[i] = cx[i] + s * nxOf(i) * want[i]; pz[i] = cz[i] + s * nzOf(i) * want[i];
+      ok[i] = nearest(px[i], pz[i], want[i]).j < 0 || nearest(px[i], pz[i], want[i]).d > want[i] - .6 ? 1 : 0;
+    }
+    if (ok.some(v => v)) {
+      // Bridge each run of folded points with a straight line between the good points either side
+      let start = ok.indexOf(1);
+      for (let n = 0; n < N; n++) {
+        const i = wrapI(start + n);
+        if (ok[i] || !ok[wrapI(i - 1)]) continue;
+        const a = wrapI(i - 1);
+        let len = 0;
+        while (!ok[wrapI(i + len)]) len++;
+        const b = wrapI(i + len);
+        for (let k = 0; k < len; k++) { const t = (k + 1) / (len + 1), q = wrapI(i + k); px[q] = px[a] + (px[b] - px[a]) * t; pz[q] = pz[a] + (pz[b] - pz[a]) * t; }
+      }
+    }
+    // 3. Smooth without shrinking (alternate pull-in and push-out passes), keeping clear of the road
+    const tx2 = new Float32Array(N), tz2 = new Float32Array(N);
+    const pass = f => {
+      for (let i = 0; i < N; i++) {
+        const a = wrapI(i - 1), b = wrapI(i + 1);
+        tx2[i] = px[i] + f * ((px[a] + px[b]) / 2 - px[i]); tz2[i] = pz[i] + f * ((pz[a] + pz[b]) / 2 - pz[i]);
+      }
+      px.set(tx2); pz.set(tz2);
+    };
+    for (let it = 0; it < 120; it++) {
+      pass(.6); pass(-.62);
+      if (it % 4 === 3 || it === 119) for (let i = 0; i < N; i++) {
+        const nb = nearest(px[i], pz[i], BAR_MIN);
+        if (nb.j >= 0 && nb.d < BAR_MIN) {
+          const dx = px[i] - cx[nb.j], dz = pz[i] - cz[nb.j], d = Math.hypot(dx, dz) || 1;
+          px[i] = cx[nb.j] + dx / d * BAR_MIN; pz[i] = cz[nb.j] + dz / d * BAR_MIN;
+        }
+      }
+    }
+    // Round off any sharp corners left over (bridged folds make a V): ease each point that bends tighter than
+    // ROUND towards its neighbours until none do
+    const ROUND = 14, R3 = 4;
+    for (let it = 0; it < 400; it++) {
+      let moved = false;
+      for (let i = 0; i < N; i++) {
+        const a = wrapI(i - R3), b = wrapI(i + R3);
+        const ax = px[a] - px[i], az = pz[a] - pz[i], bx = px[b] - px[i], bz = pz[b] - pz[i];
+        const ab = Math.hypot(px[b] - px[a], pz[b] - pz[a]), cr = Math.abs(ax * bz - az * bx);
+        if (cr < 1e-6) continue;
+        const r = Math.hypot(ax, az) * Math.hypot(bx, bz) * ab / (2 * cr);   // radius through the three points
+        if (r < ROUND) { const mx = (px[a] + px[b]) / 2, mz = (pz[a] + pz[b]) / 2; px[i] += (mx - px[i]) * .3; pz[i] += (mz - pz[i]) * .3; moved = true; }
+      }
+      if (!moved) break;
+    }
+    for (let i = 0; i < N; i++) { bar[i * 2] = px[i]; bar[i * 2 + 1] = pz[i]; }
+    // Where the line crosses each sample's sideways ray, for the physics
+    for (let i = 0; i < N; i++) {
+      const ox = cx[i], oz = cz[i], dx = s * nxOf(i), dz = s * nzOf(i);
+      let best = WALL + 6;
+      for (let k = 0; k < N; k++) {
+        const k2 = wrapI(k + 1), ex = px[k2] - px[k], ez = pz[k2] - pz[k];
+        const den = dx * ez - dz * ex;
+        if (Math.abs(den) < 1e-6) continue;
+        const wx = px[k] - ox, wz = pz[k] - oz, t = (wx * ez - wz * ex) / den, u = (wx * dz - wz * dx) / den;
+        if (u >= 0 && u <= 1 && t > HW && t < best) best = t;
+      }
+      lim[i] = Math.max(HW + 3, best - .3);
+    }
+  });
 }
 loadTrack('meadow');
 
@@ -1368,7 +1454,7 @@ function buildWorld() {
   const padMat = new THREE.MeshBasicMaterial({ map: padTex, toneMapped: false });
   for (const pad of PADS) ribbon(pad.i, pad.i + pad.len, pad.lat + 3.2, pad.lat - 3.2, .05, padMat, 3, w);
 
-  // Tyre wall along the run-off limit (LIM_L / LIM_R), unbroken all the way round on both sides
+  // Tyre wall along the barrier lines (BAR_L / BAR_R), unbroken all the way round on both sides
   // Tyres in the countryside; in the city, glowing neon barriers
   const wallTex = CITY ? canvasTex(64, 16, (x, W, H) => {
     x.fillStyle = '#101018'; x.fillRect(0, 0, W, H);
@@ -1377,13 +1463,14 @@ function buildWorld() {
     x.fillStyle = 'rgba(255,255,255,.5)'; for (let i = 0; i < 4; i++) x.fillRect(i * W / 4 + 6, 7, 4, 2);
   }) : canvasTex(64, 16, (x, W, H) => { for (let i = 0; i < 4; i++) { x.fillStyle = i % 2 ? LOOK.wall[1] : LOOK.wall[0]; x.fillRect(i * W / 4, 0, W / 4, H); } });
   const wallPos = [], wallUv = [], wallIdx = [];
-  for (const s of [-1, 1]) {
-    const lim = s > 0 ? LIM_L : LIM_R;
-    for (let i = 0; i <= N; i += 3) {
-      const j = i % N, off = lim[j] + .6, x = cx[j] + nxOf(j) * s * off, z = cz[j] + nzOf(j) * s * off;
+  for (const bar of [BAR_L, BAR_R]) {
+    let u = 0, lx = bar[0], lz = bar[1];
+    for (let i = 0; i <= N; i += 2) {
+      const j = i % N, x = bar[j * 2], z = bar[j * 2 + 1];
+      u += Math.hypot(x - lx, z - lz) * .06; lx = x; lz = z;   // texture runs by distance so tight bits don't squash it
       const y = groundAt(x, z) - .2, b = wallPos.length / 3;
       wallPos.push(x, y, z, x, y + 1.5, z);
-      wallUv.push(i * .08, 0, i * .08, 1);
+      wallUv.push(u, 0, u, 1);
       if (i) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
     }
   }
