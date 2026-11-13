@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.11';
+const BUILD = '2026-11-14.12';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -1556,13 +1556,17 @@ function buildWorld() {
     }
   }
 
+  // Snowmen get their spots first, so the trees and drifts below can leave room round them
+  const snowmen = SNOW ? pickSnowmen(rnd, nearStand) : [];
+  const byPos = (x, z, r) => snowmen.some(p => Math.hypot(x - p.x, z - p.z) < r);
+
   // Trees past the wall
   const spots = [];
   // Frosty Peaks is a proper forest, so it gets a lot more (a bit fewer on phones)
   const TREES = CITY ? 0 : DESERT ? 420 : SNOW ? (TOUCH ? 1000 : 1400) : 620;
   for (let tries = 0; tries < 20000 && spots.length < TREES; tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
-    if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z)) continue;
+    if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z) || byPos(x, z, 8)) continue;
     spots.push([x, z, groundAt(x, z)]);
   }
   // Two kinds of tree: tall pines with three tiers, and round leafy ones made of a few chunky blobs
@@ -1602,7 +1606,7 @@ function buildWorld() {
   for (let i = 0; i < N; i += 4) for (const s of [-1, 1]) {
     if (CITY || rnd() < (DESERT ? .8 : .45)) continue;
     const off = WALL + 2.2 + rnd() * 3, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
-    if (nearestAny(x, z).d < WALL + 1.5 || pondDist(x, z) < (POND?.r ?? 0) + 4 || nearStand(x, z)) continue;
+    if (nearestAny(x, z).d < WALL + 1.5 || pondDist(x, z) < (POND?.r ?? 0) + 4 || nearStand(x, z) || byPos(x, z, 4)) continue;
     bushSpots.push([x, z]);
   }
   const bushes = inst(new THREE.IcosahedronGeometry(1, 1), leafy, bushSpots.length);
@@ -1818,7 +1822,7 @@ function buildWorld() {
     w.add(pts);
     flakes = { pts, pos, g, n, sand: DESERT };
   }
-  if (SNOW) buildSnowmen(w, rnd, nearStand);
+  if (SNOW) buildSnowmen(w, snowmen);
   if (CITY) buildCity(w, rnd, nearStand, lam, size);
   if (DESERT) buildDesert(w, rnd, nearStand, lam, spots);
 
@@ -1830,18 +1834,26 @@ function buildWorld() {
   world = { track: TRACK_ID, look, flakes, scene: w, sun, sunGlow, ripple, padTex, skyMat, cloudMat, stormMat, storm, hemi, road, rain, dropPos, dropGeo, DROPS, wet: 0, bolt: 0, nextBolt: 6, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
 }
 
-// A few snowmen watching from beyond the wall
-function buildSnowmen(w, rnd, nearStand) {
+// A few snowmen watching from beyond the wall, spread out so they don't bunch up
+function pickSnowmen(rnd, nearStand) {
+  const out = [];
+  for (let tries = 0; out.length < 16 && tries < 600; tries++) {
+    const i = rnd() * N | 0, s = rnd() < .5 ? -1 : 1, off = WALL + 4 + rnd() * 6, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
+    if (nearestAny(x, z).d < WALL + 3 || nearStand(x, z) || (POND && Math.hypot(x - POND.x, z - POND.z) < POND.r + 6)) continue;
+    if (out.some(p => Math.hypot(x - p.x, z - p.z) < 30)) continue;
+    out.push({ x, z, i, s: .9 + rnd() * .4 });
+  }
+  return out;
+}
+function buildSnowmen(w, snowmen) {
   const snowMat = new THREE.MeshLambertMaterial({ color: 0xf6f9fd }), coal = new THREE.MeshLambertMaterial({ color: 0x1b1c20 }), carrot = new THREE.MeshLambertMaterial({ color: 0xff7a1a });
   const ball = new THREE.SphereGeometry(1, 14, 10), nose = new THREE.ConeGeometry(.12, .7, 8), eye = new THREE.SphereGeometry(.09, 6, 5);
   const hat = new THREE.CylinderGeometry(.42, .42, .6, 12), brim = new THREE.CylinderGeometry(.62, .62, .06, 14);
-  for (let n = 0, tries = 0; n < 16 && tries < 400; tries++) {
-    const i = rnd() * N | 0, s = rnd() < .5 ? -1 : 1, off = WALL + 4 + rnd() * 6, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
-    if (nearestAny(x, z).d < WALL + 3 || nearStand(x, z) || (POND && Math.hypot(x - POND.x, z - POND.z) < POND.r + 6)) continue;
+  for (const { x, z, i, s } of snowmen) {
     const g = new THREE.Group(), y = groundAt(x, z);
     g.position.set(x, y, z);
     g.rotation.y = Math.atan2(cx[i] - x, cz[i] - z);   // facing the road
-    g.scale.setScalar(.9 + rnd() * .4);
+    g.scale.setScalar(s);
     for (const [r, h] of [[1.25, 1], [.9, 2.75], [.62, 4.05]]) { const b = new THREE.Mesh(ball, snowMat); b.scale.setScalar(r); b.position.y = h; b.castShadow = true; g.add(b); }
     const nz = new THREE.Mesh(nose, carrot); nz.rotation.x = Math.PI / 2; nz.position.set(0, 4.05, .85); g.add(nz);
     for (const ex of [-.22, .22]) { const e = new THREE.Mesh(eye, coal); e.position.set(ex, 4.25, .55); g.add(e); }
@@ -1849,7 +1861,6 @@ function buildSnowmen(w, rnd, nearStand) {
     const h1 = new THREE.Mesh(hat, coal); h1.position.y = 4.85; g.add(h1);
     const h2 = new THREE.Mesh(brim, coal); h2.position.y = 4.57; g.add(h2);
     w.add(g);
-    n++;
   }
 }
 
