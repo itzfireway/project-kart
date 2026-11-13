@@ -273,7 +273,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.7';
+const BUILD = '2026-11-14.8';
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -982,7 +982,7 @@ const TRACKS = {
     ramps: [[14, 4.5], [445, -4.5], [620, 4.5]], pads: [[62, 0], [300, 4], [560, -4], [842, 3]], blocks: [150, 420, 700, 975],
   },
   snow: {
-    name: 'Frosty Peaks', icon: '❄️', blurb: 'A twisty mountain loop, a long run downhill and hairpins round a frozen lake', theme: 'snow', pond: { x: 35, z: 10, r: 26 },
+    name: 'Frosty Peaks', icon: '❄️', blurb: 'A twisty mountain loop, a long run downhill and hairpins round a frozen lake', theme: 'snow', pond: { x: 35, z: 10, r: 26 }, standRight: true,
     pts: [
       [-30, -167, 0], [-110, -150, 1], [-165, -132, 2], [-192, -92, 3], [-180, -42, 4], [-130, -36, 5], [-100, -64, 6], [-66, -88, 7],
       [-34, -66, 8], [-50, -16, 9], [-80, 22, 10], [-62, 62, 11], [-14, 84, 11], [30, 126, 12], [80, 160, 12], [140, 172, 12],
@@ -992,7 +992,7 @@ const TRACKS = {
     pads: [[249, 0], [518, 4], [605, -4], [45, -4]],   // the first pad sits beside the first ramp, not on it
   },
   city: {
-    name: 'Neon City', icon: '🌃', blurb: 'Night streets, winding esses and a twisty zig-zag through the middle', theme: 'city', pond: null,
+    name: 'Neon City', icon: '🌃', blurb: 'Night streets, winding esses and a twisty zig-zag through the middle', theme: 'city', pond: null, standRight: true,
     pts: [
       [-44, 189, 0], [0, 189, 0], [38, 182, 0], [66, 160, 0], [100, 150, 0], [128, 162, 1], [164, 174, 1], [187, 144, 1],
       [170, 106, 1], [160, 74, 1], [184, 36, 2], [190, -4, 2], [172, -48, 2], [174, -96, 2], [190, -136, 2], [183, -170, 3],
@@ -1224,9 +1224,9 @@ function buildWorld() {
   const TH = TRACK.theme, LOOK = THEMES[TH], SNOW = TH === 'snow', CITY = TH === 'city', MEADOW = TH === 'meadow', DESERT = TH === 'desert';
   const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
   const pondDist = (x, z) => POND ? Math.hypot(x - POND.x, z - POND.z) : 1e9;
-  // The grandstand sits on the left of the road just before the start line, facing it
-  const standI = wrapI(-8), standRot = Math.atan2(-nxOf(standI), -nzOf(standI));
-  const standX = cx[standI] + nxOf(standI) * 43, standZ = cz[standI] + nzOf(standI) * 43;
+  // The grandstand sits beside the road just before the start line, facing it: on the left unless the track says right
+  const standS = TRACK.standRight ? -1 : 1, standI = wrapI(-8), standRot = Math.atan2(-standS * nxOf(standI), -standS * nzOf(standI));
+  const standX = cx[standI] + standS * nxOf(standI) * 43, standZ = cz[standI] + standS * nzOf(standI) * 43;
   const nearStand = (x, z) => {
     const dx = x - standX, dz = z - standZ, lx = dx * Math.cos(standRot) - dz * Math.sin(standRot), lz = dx * Math.sin(standRot) + dz * Math.cos(standRot);
     return Math.abs(lx) < 62 && lz > -30 && lz < 20;
