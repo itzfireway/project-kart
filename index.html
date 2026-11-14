@@ -183,6 +183,17 @@
     .card td { padding: 0 6px; }
     .card button { margin-top: 0; padding: 7px; font-size: 13px; }
   }
+  #logBtn { width: 100%; margin-top: 22px; padding: 9px; font-size: 13px; font-weight: 700; color: var(--dim); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
+  #logBtn:hover { color: var(--text); }
+  #log { display: none; position: fixed; inset: 0; z-index: 20; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 12, 18, .6); }
+  #log.show { display: flex; }
+  #log .card { width: min(480px, 100%); max-height: 100%; display: flex; flex-direction: column; }
+  #logList { overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
+  #logList h4 { margin: 14px 0 4px; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--hot); }
+  #logList h4:first-child { margin-top: 0; }
+  #logList ul { margin: 0; padding-left: 18px; }
+  #logList li { margin: 3px 0; font-size: 14px; color: var(--text); }
+  #log .card > button { flex: none; }
 </style>
 </head>
 <body>
@@ -233,6 +244,7 @@
   <label class="devOnly">Steer <input type="range" id="steer" min="-1" max="1" step=".01" value="0"></label>
   <label class="devOnly">Spin wheels <input type="checkbox" id="spin"></label>
   <label class="devOnly">Turntable <input type="checkbox" id="turn" checked></label>
+  <button id="logBtn">&#128220; Update log</button>
 </aside>
 
 <div id="hud">
@@ -266,6 +278,12 @@
   <button id="quit">Back to garage</button>
 </div></div>
 
+<div id="log"><div class="card">
+  <h3>Update log</h3>
+  <div id="logList"></div>
+  <button id="logClose">Close</button>
+</div></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
@@ -273,7 +291,61 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.12';
+const BUILD = '2026-11-14.13';
+
+// Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
+const UPDATES = [
+  ['14 Nov 2026', [
+    'New: this update log',
+    'Frosty Peaks: way more trees, and snowmen no longer stand inside them',
+    'Grandstands sit on solid ground with a concrete base and roof posts, so they never float',
+    'Barriers: smooth unbroken walls on both sides of every track, kept clear of tight bends',
+    'Frosty Peaks: new layout (mountain loop, long run down the middle, hairpins round a frozen lake)',
+    'Neon City: new layout (big outer loop with a zig-zag and hairpin through the middle, winding esses)',
+    'Canyon Run: new twisty layout with only two ramps',
+    'Grandstand moved to the right of the start straight on Frosty Peaks and Neon City',
+  ]],
+  ['13 Nov 2026', [
+    'New track: Canyon Run (sand dunes, cacti, an oasis, a big rock arch). Grand Prix is now all 4 tracks',
+    'Canyon Run weather: Sunny, Windy or Sandstorm',
+    'New item: Mega kart 💪 grow huge for 8s and knock other karts aside just by touching them',
+  ]],
+  ['11 Nov 2026', [
+    'New tracks: Frosty Peaks (snow) and Neon City (night)',
+    'New mode: Grand Prix, every track in a random order with points for each place',
+    'Grand Prix works in online rooms too',
+    'New karts: Rocket (top speed) and Buggy (keeps speed on grass and snow)',
+    'Friends\' names float above their karts and show on the minimap',
+    'Frosty Peaks weather: Sunny, Snowy or Heavy snow',
+    'The game updates itself when there is a new version, and tells you if a friend is on an old copy',
+  ]],
+  ['10 Nov 2026', [
+    'Fixed coloured dots in the clouds on phones',
+  ]],
+  ['9 Nov 2026', [
+    'Better graphics: grass, flowers, bushes, trees, rippling water, sky reflections, smoother edges on phones',
+    'New: Weather picker (Sunny, Rainy, Thunder). A zap brings rain for a while',
+    'Fixed snow on the mountains flickering',
+  ]],
+  ['4 Nov 2026', [
+    'Online rooms: several friends can join, the room code is shown, and a relay kicks in if a direct link won\'t connect',
+  ]],
+  ['3 Nov 2026', [
+    'New: lucky ? blocks with random items, two item slots',
+    'Ramps with tricks for a landing boost, boost pads, slower on grass',
+    'Lap picker, music, start lights, sounds, medals and lap times',
+    'CPUs drift, grab items and dodge oil',
+    'Phone fixes: portrait layout, vibration, fullscreen',
+  ]],
+  ['2 Nov 2026', [
+    'Phone controls: steer slider, Drift, Brake and Item buttons',
+    'Online friend races with invite links',
+    'Game goes live online',
+  ]],
+  ['31 Oct 2026', [
+    'Project Kart is born: garage with kart bodies and paint, 3-lap race against 7 CPUs, drifting and boost pads',
+  ]],
+];
 (async () => {
   try {
     const res = await fetch(location.pathname, { cache: 'reload' });
@@ -3340,6 +3412,13 @@ addEventListener('keydown', e => {
   if ((e.code === 'KeyE' || e.code === 'KeyX') && race.t > 0) itemReq = true;
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Update log popup
+$('logList').innerHTML = UPDATES.map(([day, items]) => `<h4>${day}</h4><ul>${items.map(t => `<li>${t}</li>`).join('')}</ul>`).join('');
+$('logBtn').onclick = () => $('log').classList.add('show');
+$('logClose').onclick = () => $('log').classList.remove('show');
+$('log').onclick = e => { if (e.target === $('log')) $('log').classList.remove('show'); };
+addEventListener('keydown', e => { if (e.code === 'Escape') $('log').classList.remove('show'); });
 addEventListener('blur', () => { for (const c in keys) keys[c] = false; releaseTouch(); });
 
 // On-screen controls. The steering pad reads how far your thumb is from its centre, so you can slide across without lifting.
