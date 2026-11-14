@@ -291,10 +291,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-14.13';
+const BUILD = '2026-11-15.1';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
+  ['15 Nov 2026', [
+    'Your kart is saved: body, paint, race number and name stay the same next time you play',
+  ]],
   ['14 Nov 2026', [
     'New: this update log',
     'Frosty Peaks: way more trees, and snowmen no longer stand inside them',
@@ -995,6 +998,14 @@ try {
   if (TRACKS[saved.track]) state.track = saved.track;
   if (saved.mode === 'gp') state.mode = 'gp';
 } catch (e) {}
+// Your kart (body, paint, race number) is remembered between visits; ?body= / ?paint= in the link still win
+try {
+  const mine = JSON.parse(localStorage.getItem('kart-custom') || '{}');
+  if (!q.has('body') && BODIES[mine.body]) state.body = mine.body;
+  if (!q.has('paint') && PAINTS.some(p => p.name === mine.paint)) state.paint = PAINTS.find(p => p.name === mine.paint);
+  if (Number.isInteger(mine.number) && mine.number >= 0 && mine.number <= 99) state.number = mine.number;
+} catch (e) {}
+function saveKart() { try { localStorage.setItem('kart-custom', JSON.stringify({ body: state.body, paint: state.paint.name, number: state.number })); } catch (e) {} }
 function saveRaceOptions() { try { localStorage.setItem('kart-race', JSON.stringify({ laps: state.laps, items: state.items, music: state.music, weather: state.weather, track: state.track, mode: state.mode })); } catch (e) {} }
 const $ = id => document.getElementById(id);
 const turnBox = $('turn'), spinBox = $('spin'), steerBox = $('steer'), numberBox = $('number');
@@ -1005,6 +1016,7 @@ function rebuild() {
   if (kart) { stage.remove(kart.group); kart.dispose(); }
   kart = buildKart(state);
   stage.add(kart.group);
+  saveKart();
   document.querySelectorAll('.body').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.body));
   document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.paint.name));
   $('stats').innerHTML = Object.entries(BODIES[state.body].stats).map(([k, v]) => `<div class="stat">${k}<div class="bar"><i style="width:${v * 20}%"></i></div></div>`).join('');
@@ -1032,6 +1044,7 @@ Object.keys(VIEWS).forEach(name => {
   btn.onclick = () => { const [yaw, pitch, dist] = VIEWS[name]; orbit.goal = { yaw, pitch, dist }; turnBox.checked = false; };
   $('views').append(btn);
 });
+numberBox.value = state.number;
 numberBox.oninput = () => { state.number = Math.min(99, Math.max(0, parseInt(numberBox.value, 10) || 0)); rebuild(); };
 
 if (VIEWS[q.get('view')]) { [orbit.yaw, orbit.pitch, orbit.dist] = VIEWS[q.get('view')]; turnBox.checked = false; }
@@ -4084,7 +4097,7 @@ function netInterpolate() {
 }
 
 try { $('netName').value = localStorage.getItem('kart-name') || ''; } catch (e) {}
-$('netName').oninput = () => { if (net.room) netProfileChanged(); };
+$('netName').oninput = () => { try { localStorage.setItem('kart-name', $('netName').value.trim()); } catch (e) {} if (net.room) netProfileChanged(); };
 $('netCreate').onclick = netCreate;
 $('netJoin').onclick = () => { goFullscreen(); netJoin(); };
 $('netCode').onkeydown = e => { if (e.key === 'Enter') netJoin(); };
