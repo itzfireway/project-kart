@@ -291,12 +291,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-15.8';
+const BUILD = '2026-11-15.9';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['15 Nov 2026', [
-    'Frosty Peaks: the grandstand sits a little lower',
+    'Frosty Peaks: the grandstand sits lower',
     'Smoother, rounder railings on every track',
     'Fixed invisible walls and missing railings in some turns, and no more hidden drops between roads on Frosty Peaks',
     'Barriers on every track are now joined up all the way round, with smooth rounded corners instead of sharp spikes',
@@ -1074,7 +1074,7 @@ const TRACKS = {
     ramps: [[14, 4.5], [445, -4.5], [620, 4.5]], pads: [[62, 0], [300, 4], [560, -4], [842, 3]], blocks: [150, 420, 700, 975],
   },
   snow: {
-    name: 'Frosty Peaks', icon: '❄️', blurb: 'A twisty mountain loop, a long run downhill and hairpins round a frozen lake', theme: 'snow', pond: { x: 35, z: 10, r: 26 }, standRight: true, standDrop: 3,
+    name: 'Frosty Peaks', icon: '❄️', blurb: 'A twisty mountain loop, a long run downhill and hairpins round a frozen lake', theme: 'snow', pond: { x: 35, z: 10, r: 26 }, standRight: true, standDrop: 6,
     pts: [
       [-30, -167, 0], [-110, -150, 1], [-165, -132, 2], [-192, -92, 3], [-180, -42, 4], [-130, -36, 5], [-100, -64, 6], [-66, -88, 7],
       [-34, -66, 8], [-50, -16, 9], [-80, 22, 10], [-62, 62, 11], [-14, 84, 12], [30, 126, 15], [80, 160, 19], [140, 172, 21],
@@ -1722,8 +1722,8 @@ function buildWorld() {
       gLo = Math.min(gLo, g); gHi = Math.max(gHi, g);
     }
     const stand = new THREE.Group();
-    // standDrop (metres) sinks it a bit on tracks where the highest point makes it sit too tall
-    stand.position.set(standX, Math.max(gLo, gHi - .2 - (TRACK.standDrop || 0)), standZ);
+    // standDrop (metres) sinks it on tracks where the highest point makes it sit too tall (the bottom rows go into the ground)
+    stand.position.set(standX, gHi - .2 - (TRACK.standDrop || 0), standZ);
     stand.rotation.y = standRot;
     w.add(stand);
     const conc = lam({ color: 0xb4b6bc }), crowdGeo = new THREE.SphereGeometry(.42, 6, 5), crowd = new THREE.InstancedMesh(crowdGeo, lam({ color: 0xffffff }), 880), o = new THREE.Object3D(), cc = new THREE.Color();
