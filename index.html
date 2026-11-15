@@ -291,11 +291,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-15.6';
+const BUILD = '2026-11-15.7';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['15 Nov 2026', [
+    'Smoother, rounder railings on every track',
     'Fixed invisible walls and missing railings in some turns, and no more hidden drops between roads on Frosty Peaks',
     'Barriers on every track are now joined up all the way round, with smooth rounded corners instead of sharp spikes',
     'Frosty Peaks: all the trees are snowy white, and no more snow banks hiding the barriers in the first turns',
@@ -1176,7 +1177,7 @@ function loadTrack(id) {
 const BAR_MIN = HW + 5;
 let BARS = [];
 function buildBarriers() {
-  const D = WALL, C = 4, K = 6, G = 1.5;
+  const D = WALL, C = 4, K = 10, G = 1.5;
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
   for (let i = 0; i < N; i++) { x0 = Math.min(x0, cx[i]); x1 = Math.max(x1, cx[i]); z0 = Math.min(z0, cz[i]); z1 = Math.max(z1, cz[i]); }
   x0 -= D + 10; z0 -= D + 10; x1 += D + 10; z1 += D + 10;
@@ -1211,7 +1212,7 @@ function buildBarriers() {
   const trace = g0 => {
     let g = g0;
     // Soften so the lines come out round
-    for (let p = 0; p < 4; p++) {
+    for (let p = 0; p < 8; p++) {
       const o = new Float32Array(n);
       for (let b = 0; b < H; b++) for (let a = 0; a < W; a++) {
         let s = 0, m = 0;
@@ -1272,7 +1273,7 @@ function buildBarriers() {
         for (let i = 0; i < m; i++) { const a = (i + m - 1) % m, b = (i + 1) % m; tx2[i] = px[i] + f * ((px[a] + px[b]) / 2 - px[i]); tz2[i] = pz[i] + f * ((pz[a] + pz[b]) / 2 - pz[i]); }
         px.set(tx2); pz.set(tz2);
       };
-      for (let it = 0; it < 12; it++) { pass(.6); pass(-.62); }
+      for (let it = 0; it < 50; it++) { pass(.6); pass(-.62); }
       // Round off the tip of each wedge where two walls meet: ease any point that bends tighter than ROUND towards
       // its neighbours until none do
       const ROUND = 5, R3 = 3;
@@ -1337,13 +1338,13 @@ function buildBarriers() {
       if (Math.abs(det) < 1e-6) continue;
       const ix = (b1 * a22 - b2 * a12) / det, iz = (a11 * b2 - a12 * b1) / det;
       let dmin = 1e9; for (let j = 0; j < N; j++) dmin = Math.min(dmin, Math.hypot(ix - cx[j], iz - cz[j]));
-      if (dmin > HW + 3.5) islands.push([ix, iz, Math.max(1.5, Math.min(dmin - BAR_MIN, dmin - HW - 2))]);
+      if (dmin > HW + 3.5) islands.push([ix, iz, Math.max(1.5, Math.min(5, dmin - BAR_MIN, dmin - HW - 2))]);
     }
   }
   if (islands.length === before) break;
   for (let b = 0; b < H; b++) for (let a = 0; a < W; a++) {
     const c = b * W + a, x = x0 + a * G, z = z0 + b * G;
-    for (let k = before; k < islands.length; k++) { const [ix, iz, ir] = islands[k]; g[c] = smin(g[c], Math.hypot(x - ix, z - iz) - ir, K); }
+    for (let k = before; k < islands.length; k++) { const [ix, iz, ir] = islands[k]; g[c] = smin(g[c], Math.hypot(x - ix, z - iz) - ir, 16); }
   }
   trace(g);
   }
