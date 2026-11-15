@@ -291,11 +291,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-15.5';
+const BUILD = '2026-11-15.6';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['15 Nov 2026', [
+    'Fixed invisible walls and missing railings in some turns, and no more hidden drops between roads on Frosty Peaks',
     'Barriers on every track are now joined up all the way round, with smooth rounded corners instead of sharp spikes',
     'Frosty Peaks: all the trees are snowy white, and no more snow banks hiding the barriers in the first turns',
     'Frosty Peaks: cleared the snow piles and trees out of the second corner',
@@ -1175,7 +1176,7 @@ function loadTrack(id) {
 const BAR_MIN = HW + 5;
 let BARS = [];
 function buildBarriers() {
-  const D = WALL, C = 2.2, K = 6, G = 1.5;
+  const D = WALL, C = 4, K = 6, G = 1.5;
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
   for (let i = 0; i < N; i++) { x0 = Math.min(x0, cx[i]); x1 = Math.max(x1, cx[i]); z0 = Math.min(z0, cz[i]); z1 = Math.max(z1, cz[i]); }
   x0 -= D + 10; z0 -= D + 10; x1 += D + 10; z1 += D + 10;
@@ -1192,11 +1193,12 @@ function buildBarriers() {
   // Nearest bit of road
   for (let j = 0; j < N; j++) stamp(j, D + 6, (c, d) => { if (d < d1[c]) { d1[c] = d; j1[c] = j; } });
   // Nearest bit of a different part of the track. Samples close along the road count as further away than they
-  // are, so a straight never walls itself off, and the wall between the legs of a hairpin fades in smoothly.
+  // are, so a straight never walls itself off, but the far side of a hairpin still counts, which puts a rounded
+  // island of wall inside it.
   const far = 2 * D + 2 * C + 2 * K;
   for (let j = 0; j < N; j++) stamp(j, far, (c, d) => {
     if (j1[c] < 0) return;
-    const sep = Math.min(wrapI(j - j1[c]), wrapI(j1[c] - j)) * DS, S = 2 * D - d1[c] + 2 * C + 6;
+    const sep = Math.min(wrapI(j - j1[c]), wrapI(j1[c] - j)) * DS, S = 2 * d1[c] + 2 * C + 4;
     const e = d + Math.max(0, S - sep);
     if (e < d2[c]) d2[c] = e;
   });
@@ -1205,110 +1207,145 @@ function buildBarriers() {
     const a = D - d1[c], b = (d2[c] - d1[c]) / 2 - C, h = clamp(.5 + .5 * (b - a) / K, 0, 1);
     g[c] = b + (a - b) * h - K * h * (1 - h);   // smooth minimum, so where walls meet the corner is rounded
   }
-  // Soften so the lines come out round
-  for (let p = 0; p < 4; p++) {
-    const o = new Float32Array(n);
-    for (let b = 0; b < H; b++) for (let a = 0; a < W; a++) {
-      let s = 0, m = 0;
-      for (let v = -1; v <= 1; v++) for (let u = -1; u <= 1; u++) { const aa = a + u, bb = b + v; if (aa >= 0 && aa < W && bb >= 0 && bb < H) { s += g[bb * W + aa]; m++; } }
-      o[b * W + a] = s / m;
+  const smin = (a, b, k) => { const h = clamp(.5 + .5 * (b - a) / k, 0, 1); return b + (a - b) * h - k * h * (1 - h); };
+  const trace = g0 => {
+    let g = g0;
+    // Soften so the lines come out round
+    for (let p = 0; p < 4; p++) {
+      const o = new Float32Array(n);
+      for (let b = 0; b < H; b++) for (let a = 0; a < W; a++) {
+        let s = 0, m = 0;
+        for (let v = -1; v <= 1; v++) for (let u = -1; u <= 1; u++) { const aa = a + u, bb = b + v; if (aa >= 0 && aa < W && bb >= 0 && bb < H) { s += g[bb * W + aa]; m++; } }
+        o[b * W + a] = s / m;
+      }
+      g = o;
     }
-    g = o;
-  }
-  for (let a = 0; a < W; a++) { g[a] = g[(H - 1) * W + a] = -5; }
-  for (let b = 0; b < H; b++) { g[b * W] = g[b * W + W - 1] = -5; }
-  // Trace the zero line (marching squares), joining the pieces into loops
-  const pt = new Map(), next = new Map();
-  const edgePt = (a, b, horiz) => {   // where zero falls on the grid edge starting at (a, b)
-    const k = (b * W + a) * 2 + (horiz ? 0 : 1);
-    if (!pt.has(k)) {
-      const ga = g[b * W + a], gb = horiz ? g[b * W + a + 1] : g[(b + 1) * W + a], t = ga / (ga - gb);
-      pt.set(k, horiz ? [x0 + (a + t) * G, z0 + b * G] : [x0 + a * G, z0 + (b + t) * G]);
-    }
-    return k;
-  };
-  for (let b = 0; b < H - 1; b++) for (let a = 0; a < W - 1; a++) {
-    const v0 = g[b * W + a] > 0, v1 = g[b * W + a + 1] > 0, v2 = g[(b + 1) * W + a + 1] > 0, v3 = g[(b + 1) * W + a] > 0;
-    const code = v0 | v1 << 1 | v2 << 2 | v3 << 3;
-    if (code === 0 || code === 15) continue;
-    const eT = () => edgePt(a, b, true), eR = () => edgePt(a + 1, b, false), eB = () => edgePt(a, b + 1, true), eL = () => edgePt(a, b, false);
-    // Segments run with the drivable side on the left, so each loop has a consistent direction
-    const seg = (p, q) => next.set(p(), q());
-    const mid = (g[b * W + a] + g[b * W + a + 1] + g[(b + 1) * W + a + 1] + g[(b + 1) * W + a]) > 0;
-    switch (code) {
-      case 1: seg(eL, eT); break; case 2: seg(eT, eR); break; case 3: seg(eL, eR); break; case 4: seg(eR, eB); break;
-      case 5: if (mid) { seg(eL, eB); seg(eR, eT); } else { seg(eL, eT); seg(eR, eB); } break;
-      case 6: seg(eT, eB); break; case 7: seg(eL, eB); break; case 8: seg(eB, eL); break; case 9: seg(eB, eT); break;
-      case 10: if (mid) { seg(eT, eL); seg(eB, eR); } else { seg(eT, eR); seg(eB, eL); } break;
-      case 11: seg(eB, eR); break; case 12: seg(eR, eL); break; case 13: seg(eR, eT); break; case 14: seg(eT, eL); break;
-    }
-  }
-  const nearest = (x, z) => { let best = 1e12, bj = 0; for (let j = 0; j < N; j += 2) { const dx = x - cx[j], dz = z - cz[j], d = dx * dx + dz * dz; if (d < best) { best = d; bj = j; } } return bj; };
-  BARS = [];
-  const seen = new Set();
-  for (const start of next.keys()) {
-    if (seen.has(start)) continue;
-    const loop = [];
-    let k = start;
-    while (k !== undefined && !seen.has(k)) { seen.add(k); loop.push(...pt.get(k)); k = next.get(k); }
-    if (loop.length < 16) continue;
-    // Even out the spacing a little and smooth (without shrinking), keeping clear of the road
-    // Respace the points evenly, one every STEP metres
-    const STEP = 1.5, L = loop.length / 2, cum = [0];
-    for (let i = 1; i <= L; i++) { const a = (i - 1) % L, b = i % L; cum.push(cum[i - 1] + Math.hypot(loop[b * 2] - loop[a * 2], loop[b * 2 + 1] - loop[a * 2 + 1])); }
-    const m = Math.max(8, Math.round(cum[L] / STEP)), px = new Float32Array(m), pz = new Float32Array(m), tx2 = new Float32Array(m), tz2 = new Float32Array(m);
-    for (let i = 0, q = 0; i < m; i++) {
-      const at = i / m * cum[L];
-      while (cum[q + 1] < at) q++;
-      const a = q % L, b = (q + 1) % L, t = (at - cum[q]) / ((cum[q + 1] - cum[q]) || 1);
-      px[i] = loop[a * 2] + (loop[b * 2] - loop[a * 2]) * t; pz[i] = loop[a * 2 + 1] + (loop[b * 2 + 1] - loop[a * 2 + 1]) * t;
-    }
-    const pass = f => {
-      for (let i = 0; i < m; i++) { const a = (i + m - 1) % m, b = (i + 1) % m; tx2[i] = px[i] + f * ((px[a] + px[b]) / 2 - px[i]); tz2[i] = pz[i] + f * ((pz[a] + pz[b]) / 2 - pz[i]); }
-      px.set(tx2); pz.set(tz2);
+    for (let a = 0; a < W; a++) { g[a] = g[(H - 1) * W + a] = -5; }
+    for (let b = 0; b < H; b++) { g[b * W] = g[b * W + W - 1] = -5; }
+    // Trace the zero line (marching squares), joining the pieces into loops
+    const pt = new Map(), next = new Map();
+    const edgePt = (a, b, horiz) => {   // where zero falls on the grid edge starting at (a, b)
+      const k = (b * W + a) * 2 + (horiz ? 0 : 1);
+      if (!pt.has(k)) {
+        const ga = g[b * W + a], gb = horiz ? g[b * W + a + 1] : g[(b + 1) * W + a], t = ga / (ga - gb);
+        pt.set(k, horiz ? [x0 + (a + t) * G, z0 + b * G] : [x0 + a * G, z0 + (b + t) * G]);
+      }
+      return k;
     };
-    for (let it = 0; it < 12; it++) { pass(.6); pass(-.62); }
-    // Round off the tip of each wedge where two walls meet: ease any point that bends tighter than ROUND towards
-    // its neighbours until none do
-    const ROUND = 9, R3 = 4;
-    for (let it = 0; it < 1500; it++) {
-      let moved = false;
+    for (let b = 0; b < H - 1; b++) for (let a = 0; a < W - 1; a++) {
+      const v0 = g[b * W + a] > 0, v1 = g[b * W + a + 1] > 0, v2 = g[(b + 1) * W + a + 1] > 0, v3 = g[(b + 1) * W + a] > 0;
+      const code = v0 | v1 << 1 | v2 << 2 | v3 << 3;
+      if (code === 0 || code === 15) continue;
+      const eT = () => edgePt(a, b, true), eR = () => edgePt(a + 1, b, false), eB = () => edgePt(a, b + 1, true), eL = () => edgePt(a, b, false);
+      // Segments run with the drivable side on the left, so each loop has a consistent direction
+      const seg = (p, q) => next.set(p(), q());
+      const mid = (g[b * W + a] + g[b * W + a + 1] + g[(b + 1) * W + a + 1] + g[(b + 1) * W + a]) > 0;
+      switch (code) {
+        case 1: seg(eL, eT); break; case 2: seg(eT, eR); break; case 3: seg(eL, eR); break; case 4: seg(eR, eB); break;
+        case 5: if (mid) { seg(eL, eB); seg(eR, eT); } else { seg(eL, eT); seg(eR, eB); } break;
+        case 6: seg(eT, eB); break; case 7: seg(eL, eB); break; case 8: seg(eB, eL); break; case 9: seg(eB, eT); break;
+        case 10: if (mid) { seg(eT, eL); seg(eB, eR); } else { seg(eT, eR); seg(eB, eL); } break;
+        case 11: seg(eB, eR); break; case 12: seg(eR, eL); break; case 13: seg(eR, eT); break; case 14: seg(eT, eL); break;
+      }
+    }
+    const nearest = (x, z) => { let best = 1e12, bj = 0; for (let j = 0; j < N; j += 2) { const dx = x - cx[j], dz = z - cz[j], d = dx * dx + dz * dz; if (d < best) { best = d; bj = j; } } return bj; };
+    BARS = [];
+    const seen = new Set();
+    for (const start of next.keys()) {
+      if (seen.has(start)) continue;
+      const loop = [];
+      let k = start;
+      while (k !== undefined && !seen.has(k)) { seen.add(k); loop.push(...pt.get(k)); k = next.get(k); }
+      if (loop.length < 16) continue;
+      // Even out the spacing a little and smooth (without shrinking), keeping clear of the road
+      // Respace the points evenly, one every STEP metres
+      const STEP = 1.5, L = loop.length / 2, cum = [0];
+      for (let i = 1; i <= L; i++) { const a = (i - 1) % L, b = i % L; cum.push(cum[i - 1] + Math.hypot(loop[b * 2] - loop[a * 2], loop[b * 2 + 1] - loop[a * 2 + 1])); }
+      const m = Math.max(8, Math.round(cum[L] / STEP)), px = new Float32Array(m), pz = new Float32Array(m), tx2 = new Float32Array(m), tz2 = new Float32Array(m);
+      for (let i = 0, q = 0; i < m; i++) {
+        const at = i / m * cum[L];
+        while (cum[q + 1] < at) q++;
+        const a = q % L, b = (q + 1) % L, t = (at - cum[q]) / ((cum[q + 1] - cum[q]) || 1);
+        px[i] = loop[a * 2] + (loop[b * 2] - loop[a * 2]) * t; pz[i] = loop[a * 2 + 1] + (loop[b * 2 + 1] - loop[a * 2 + 1]) * t;
+      }
+      const pass = f => {
+        for (let i = 0; i < m; i++) { const a = (i + m - 1) % m, b = (i + 1) % m; tx2[i] = px[i] + f * ((px[a] + px[b]) / 2 - px[i]); tz2[i] = pz[i] + f * ((pz[a] + pz[b]) / 2 - pz[i]); }
+        px.set(tx2); pz.set(tz2);
+      };
+      for (let it = 0; it < 12; it++) { pass(.6); pass(-.62); }
+      // Round off the tip of each wedge where two walls meet: ease any point that bends tighter than ROUND towards
+      // its neighbours until none do
+      const ROUND = 5, R3 = 3;
+      for (let it = 0; it < 1500; it++) {
+        let moved = false;
+        for (let i = 0; i < m; i++) {
+          const a = (i + m - R3) % m, b = (i + R3) % m;
+          const ax = px[a] - px[i], az = pz[a] - pz[i], bx = px[b] - px[i], bz = pz[b] - pz[i];
+          const ab = Math.hypot(px[b] - px[a], pz[b] - pz[a]), cr = Math.abs(ax * bz - az * bx);
+          if (cr < 1e-6) continue;
+          const r = Math.hypot(ax, az) * Math.hypot(bx, bz) * ab / (2 * cr);
+          if (r < ROUND) { px[i] += ((px[a] + px[b]) / 2 - px[i]) * .3; pz[i] += ((pz[a] + pz[b]) / 2 - pz[i]) * .3; moved = true; }
+        }
+        if (!moved) break;
+        pass(.3);
+      }
       for (let i = 0; i < m; i++) {
-        const a = (i + m - R3) % m, b = (i + R3) % m;
-        const ax = px[a] - px[i], az = pz[a] - pz[i], bx = px[b] - px[i], bz = pz[b] - pz[i];
-        const ab = Math.hypot(px[b] - px[a], pz[b] - pz[a]), cr = Math.abs(ax * bz - az * bx);
-        if (cr < 1e-6) continue;
-        const r = Math.hypot(ax, az) * Math.hypot(bx, bz) * ab / (2 * cr);
-        if (r < ROUND) { px[i] += ((px[a] + px[b]) / 2 - px[i]) * .3; pz[i] += ((pz[a] + pz[b]) / 2 - pz[i]) * .3; moved = true; }
+        const j = nearest(px[i], pz[i]), dx = px[i] - cx[j], dz = pz[i] - cz[j], d = Math.hypot(dx, dz) || 1;
+        if (d < HW + 2) { px[i] = cx[j] + dx / d * (HW + 2); pz[i] = cz[j] + dz / d * (HW + 2); }
       }
-      if (!moved) break;
-      pass(.3);
+      const bar = new Float32Array(m * 2);
+      for (let i = 0; i < m; i++) { bar[i * 2] = px[i]; bar[i * 2 + 1] = pz[i]; }
+      BARS.push(bar);
     }
-    for (let i = 0; i < m; i++) {
-      const j = nearest(px[i], pz[i]), dx = px[i] - cx[j], dz = pz[i] - cz[j], d = Math.hypot(dx, dz) || 1;
-      if (d < BAR_MIN) { px[i] = cx[j] + dx / d * BAR_MIN; pz[i] = cz[j] + dz / d * BAR_MIN; }
+    // Where each sample's sideways ray first meets a barrier, for the physics
+    for (const [lim, s] of [[LIM_L, 1], [LIM_R, -1]]) for (let i = 0; i < N; i++) {
+      const ox = cx[i], oz = cz[i], dx = s * nxOf(i), dz = s * nzOf(i);
+      let best = 2 * WALL + 10;   // far enough for the inside of tight bends, where the wall sits well back
+      for (const bar of BARS) {
+        const m = bar.length / 2;
+        for (let k = 0; k < m; k++) {
+          const k2 = (k + 1) % m, ex = bar[k2 * 2] - bar[k * 2], ez = bar[k2 * 2 + 1] - bar[k * 2 + 1];
+          const den = dx * ez - dz * ex;
+          if (Math.abs(den) < 1e-6) continue;
+          const wx = bar[k * 2] - ox, wz = bar[k * 2 + 1] - oz, t = (wx * ez - wz * ex) / den;
+          if (t <= HW || t >= best) continue;
+          const u = (wx * dz - wz * dx) / den;
+          if (u >= 0 && u <= 1) best = t;
+        }
+      }
+      lim[i] = best >= 2 * WALL + 10 ? WALL : Math.max(HW + 3, best - .3);
     }
-    const bar = new Float32Array(m * 2);
-    for (let i = 0; i < m; i++) { bar[i * 2] = px[i]; bar[i * 2 + 1] = pz[i]; }
-    BARS.push(bar);
+  };
+  trace(g);
+  // In a tight bend or the narrow U between two parts of the road, a sideways ray can cross the whole gap without
+  // meeting a wall. Put a rounded island of wall where those rays meet, joined smoothly into the rest, and trace
+  // again.
+  const islands = [];
+  for (let round = 0; round < 3; round++) {
+  const before = islands.length;
+  for (const [lim, s] of [[LIM_L, 1], [LIM_R, -1]]) {
+    for (let i = 0; i < N; i++) {
+      if (lim[i] !== WALL || lim[wrapI(i - 1)] === WALL) continue;
+      let len = 0; while (lim[wrapI(i + len)] === WALL && len < N) len++;
+      // The point closest to all those rays (least squares)
+      let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+      for (let k = 0; k < len; k++) {
+        const q = wrapI(i + k), nx = s * nxOf(q), nz = s * nzOf(q), m11 = 1 - nx * nx, m12 = -nx * nz, m22 = 1 - nz * nz;
+        a11 += m11; a12 += m12; a22 += m22; b1 += m11 * cx[q] + m12 * cz[q]; b2 += m12 * cx[q] + m22 * cz[q];
+      }
+      const det = a11 * a22 - a12 * a12;
+      if (Math.abs(det) < 1e-6) continue;
+      const ix = (b1 * a22 - b2 * a12) / det, iz = (a11 * b2 - a12 * b1) / det;
+      let dmin = 1e9; for (let j = 0; j < N; j++) dmin = Math.min(dmin, Math.hypot(ix - cx[j], iz - cz[j]));
+      if (dmin > HW + 3.5) islands.push([ix, iz, Math.max(1.5, Math.min(dmin - BAR_MIN, dmin - HW - 2))]);
+    }
   }
-  // Where each sample's sideways ray first meets a barrier, for the physics
-  for (const [lim, s] of [[LIM_L, 1], [LIM_R, -1]]) for (let i = 0; i < N; i++) {
-    const ox = cx[i], oz = cz[i], dx = s * nxOf(i), dz = s * nzOf(i);
-    let best = WALL + 6;
-    for (const bar of BARS) {
-      const m = bar.length / 2;
-      for (let k = 0; k < m; k++) {
-        const k2 = (k + 1) % m, ex = bar[k2 * 2] - bar[k * 2], ez = bar[k2 * 2 + 1] - bar[k * 2 + 1];
-        const den = dx * ez - dz * ex;
-        if (Math.abs(den) < 1e-6) continue;
-        const wx = bar[k * 2] - ox, wz = bar[k * 2 + 1] - oz, t = (wx * ez - wz * ex) / den;
-        if (t <= HW || t >= best) continue;
-        const u = (wx * dz - wz * dx) / den;
-        if (u >= 0 && u <= 1) best = t;
-      }
-    }
-    lim[i] = Math.max(HW + 3, best - .3);
+  if (islands.length === before) break;
+  for (let b = 0; b < H; b++) for (let a = 0; a < W; a++) {
+    const c = b * W + a, x = x0 + a * G, z = z0 + b * G;
+    for (let k = before; k < islands.length; k++) { const [ix, iz, ir] = islands[k]; g[c] = smin(g[c], Math.hypot(x - ix, z - iz) - ir, K); }
+  }
+  trace(g);
   }
 }
 loadTrack('meadow');
@@ -1328,6 +1365,17 @@ function locate(x, z, hint, win) {
 }
 // Spots a track wants left empty (no trees, drifts or snowmen)
 const inClear = (x, z) => (TRACK.clear || []).some(([cx0, cz0, r]) => Math.hypot(x - cx0, z - cz0) < r);
+// The closest sample on a different part of the track from sample i (at least 60m away along the road)
+function otherSection(x, z, i) {
+  let best = 1e12, bi = -1;
+  const sep = Math.round(60 / DS);
+  for (let j = 0; j < N; j += 3) {
+    if (Math.min(wrapI(j - i), wrapI(i - j)) < sep) continue;
+    const dx = x - cx[j], dz = z - cz[j], d = dx * dx + dz * dz;
+    if (d < best) { best = d; bi = j; }
+  }
+  return { i: bi, d: Math.sqrt(best) };
+}
 function nearestAny(x, z) {
   let best = 1e12, bi = 0;
   for (let i = 0; i < N; i += 5) { const dx = x - cx[i], dz = z - cz[i], d = dx * dx + dz * dz; if (d < best) { best = d; bi = i; } }
@@ -1457,9 +1505,18 @@ function buildWorld() {
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i), near = nearestAny(x, z);
     // On the snow track the ground stays flat out to the barrier, so banks of snow don't hide it on the inside of bends
-    let rise0 = HW + 4, rise1 = HW + 26;
-    if (SNOW) { const lim = (x - cx[near.i]) * nxOf(near.i) + (z - cz[near.i]) * nzOf(near.i) >= 0 ? LIM_L[near.i] : LIM_R[near.i]; rise0 = Math.max(rise0, lim + 2); rise1 = Math.max(rise1, lim + 22); }
-    let h = cy[near.i] + (naturalHeight(x, z) - cy[near.i]) * smooth(rise0, rise1, near.d);
+    let rise0 = HW + 4, rise1 = HW + 26, base = cy[near.i];
+    if (SNOW) {
+      const lim = (x - cx[near.i]) * nxOf(near.i) + (z - cz[near.i]) * nzOf(near.i) >= 0 ? LIM_L[near.i] : LIM_R[near.i];
+      rise0 = Math.max(rise0, lim + 2); rise1 = Math.max(rise1, lim + 22);
+      // Between two parts of the road at different heights, slope from one to the other instead of a sudden drop
+      const o = otherSection(x, z, near.i);
+      if (o.i >= 0 && o.d < near.d + 70) {
+        const w1 = 1 / (near.d + 2) ** 3, w2 = 1 / (o.d + 2) ** 3;
+        base += ((cy[o.i] - base) * w2 / (w1 + w2)) * smooth(HW + 1, HW + 8, near.d);
+      }
+    }
+    let h = base + (naturalHeight(x, z) - base) * smooth(rise0, rise1, near.d);
     if (near.d < HW + 1.5) h -= .28;
     GROUND[i] = h;
     p.setY(i, h);
@@ -1603,8 +1660,11 @@ function buildWorld() {
     for (let i = 0; i <= m; i++) {
       const j = i % m, x = bar[j * 2], z = bar[j * 2 + 1];
       u += Math.hypot(x - lx, z - lz) * .06; lx = x; lz = z;   // texture runs by distance so tight bits don't squash it
-      const y = groundAt(x, z) - .2, b = wallPos.length / 3;
-      wallPos.push(x, y, z, x, y + 1.5, z);
+      // Sit on the higher ground either side and reach down to the lower, so a slope or drop never hides the wall
+      const a = (j + m - 1) % m, c2 = (j + 1) % m, ex = bar[c2 * 2] - bar[a * 2], ez = bar[c2 * 2 + 1] - bar[a * 2 + 1], el = Math.hypot(ex, ez) || 1;
+      const sx = -ez / el * 2, sz = ex / el * 2, g0 = groundAt(x, z), g1 = groundAt(x + sx, z + sz), g2 = groundAt(x - sx, z - sz);
+      const y = Math.min(g0, g1, g2) - .3, top = Math.max(g0, g1, g2) + 1.5, b = wallPos.length / 3;
+      wallPos.push(x, y, z, x, top, z);
       wallUv.push(u, 0, u, 1);
       if (i) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
     }
