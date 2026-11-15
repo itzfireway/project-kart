@@ -291,11 +291,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-15.3';
+const BUILD = '2026-11-15.4';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['15 Nov 2026', [
+    'Frosty Peaks: all the trees are snowy white, and no more snow banks hiding the barriers in the first turns',
     'Frosty Peaks: cleared the snow piles and trees out of the second corner',
     'Frosty Peaks: big snowy hills round the edge, a giant one in the corner, and the road climbs higher along the top',
     'Your kart is saved: body, paint, race number and name stay the same next time you play',
@@ -1422,7 +1423,10 @@ function buildWorld() {
   const grassA = lin(LOOK.ground[0]), grassB = lin(LOOK.ground[1]), dirt = lin(LOOK.edge), sand = lin(LOOK.shore);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i), near = nearestAny(x, z);
-    let h = cy[near.i] + (naturalHeight(x, z) - cy[near.i]) * smooth(HW + 4, HW + 26, near.d);
+    // On the snow track the ground stays flat out to the barrier, so banks of snow don't hide it on the inside of bends
+    let rise0 = HW + 4, rise1 = HW + 26;
+    if (SNOW) { const lim = (x - cx[near.i]) * nxOf(near.i) + (z - cz[near.i]) * nzOf(near.i) >= 0 ? LIM_L[near.i] : LIM_R[near.i]; rise0 = Math.max(rise0, lim + 2); rise1 = Math.max(rise1, lim + 22); }
+    let h = cy[near.i] + (naturalHeight(x, z) - cy[near.i]) * smooth(rise0, rise1, near.d);
     if (near.d < HW + 1.5) h -= .28;
     GROUND[i] = h;
     p.setY(i, h);
@@ -1681,8 +1685,8 @@ function buildWorld() {
     const s = .8 + rnd() * .9, rot = rnd() * 6.3;
     m4.scale.setScalar(s); m4.rotation.set(0, rot, 0);
     m4.position.set(x, y + 1.4 * s, z); m4.updateMatrix(); trunks.setMatrixAt(ti++, m4.matrix);
-    // Snowy pines are mostly frosted white, with a few dark green ones poking through
-    if (SNOW && rnd() < .7) tint.setHSL(.55 + rnd() * .05, .15 + rnd() * .1, .62 + rnd() * .14);
+    // Snowy pines are all frosted white
+    if (SNOW) tint.setHSL(.57 + rnd() * .04, .12 + rnd() * .08, .8 + rnd() * .1);
     else tint.setHSL(.3 + rnd() * .06, .45 + rnd() * .15, .2 + rnd() * .08);
     for (const t of tiers) { m4.position.set(x, y + t.y * s, z); m4.updateMatrix(); t.m.setMatrixAt(i, m4.matrix); t.m.setColorAt(i, tint); }
   });
