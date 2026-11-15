@@ -291,11 +291,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-15.2';
+const BUILD = '2026-11-15.3';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['15 Nov 2026', [
+    'Frosty Peaks: cleared the snow piles and trees out of the second corner',
     'Frosty Peaks: big snowy hills round the edge, a giant one in the corner, and the road climbs higher along the top',
     'Your kart is saved: body, paint, race number and name stay the same next time you play',
   ]],
@@ -1078,6 +1079,8 @@ const TRACKS = {
     pads: [[249, 0], [518, 4], [605, -4], [45, -4]],   // the first pad sits beside the first ramp, not on it
     // Big snowy hills in the open ground away from the road: [x, z, height, radius]
     hills: [[-145, 145, 58, 80], [-178, 58, 26, 42], [150, -185, 34, 55], [-100, 205, 30, 50]],
+    // Kept bare: no trees, drifts or snowmen inside the second corner: [x, z, radius]
+    clear: [[-155, -71, 16], [-142, -80, 18], [-125, -90, 18], [-106, -98, 16], [-138, -102, 12], [-118, -108, 12]],
   },
   city: {
     name: 'Neon City', icon: '🌃', blurb: 'Night streets, winding esses and a twisty zig-zag through the middle', theme: 'city', pond: null, standRight: true,
@@ -1289,6 +1292,8 @@ function locate(x, z, hint, win) {
   LOC.lat = (x - cx[bi]) * nxOf(bi) + (z - cz[bi]) * nzOf(bi);
   return LOC;
 }
+// Spots a track wants left empty (no trees, drifts or snowmen)
+const inClear = (x, z) => (TRACK.clear || []).some(([cx0, cz0, r]) => Math.hypot(x - cx0, z - cz0) < r);
 function nearestAny(x, z) {
   let best = 1e12, bi = 0;
   for (let i = 0; i < N; i += 5) { const dx = x - cx[i], dz = z - cz[i], d = dx * dx + dz * dz; if (d < best) { best = d; bi = i; } }
@@ -1658,7 +1663,7 @@ function buildWorld() {
   const TREES = CITY ? 0 : DESERT ? 420 : SNOW ? (TOUCH ? 1000 : 1400) : 620;
   for (let tries = 0; tries < 20000 && spots.length < TREES; tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
-    if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z) || byPos(x, z, 8)) continue;
+    if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z) || byPos(x, z, 8) || inClear(x, z)) continue;
     spots.push([x, z, groundAt(x, z)]);
   }
   // Two kinds of tree: tall pines with three tiers, and round leafy ones made of a few chunky blobs
@@ -1698,7 +1703,7 @@ function buildWorld() {
   for (let i = 0; i < N; i += 4) for (const s of [-1, 1]) {
     if (CITY || rnd() < (DESERT ? .8 : .45)) continue;
     const off = WALL + 2.2 + rnd() * 3, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
-    if (nearestAny(x, z).d < WALL + 1.5 || pondDist(x, z) < (POND?.r ?? 0) + 4 || nearStand(x, z) || byPos(x, z, 4)) continue;
+    if (nearestAny(x, z).d < WALL + 1.5 || pondDist(x, z) < (POND?.r ?? 0) + 4 || nearStand(x, z) || byPos(x, z, 4) || inClear(x, z)) continue;
     bushSpots.push([x, z]);
   }
   const bushes = inst(new THREE.IcosahedronGeometry(1, 1), leafy, bushSpots.length);
@@ -1931,7 +1936,7 @@ function pickSnowmen(rnd, nearStand) {
   const out = [];
   for (let tries = 0; out.length < 16 && tries < 600; tries++) {
     const i = rnd() * N | 0, s = rnd() < .5 ? -1 : 1, off = WALL + 4 + rnd() * 6, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
-    if (nearestAny(x, z).d < WALL + 3 || nearStand(x, z) || (POND && Math.hypot(x - POND.x, z - POND.z) < POND.r + 6)) continue;
+    if (nearestAny(x, z).d < WALL + 3 || nearStand(x, z) || inClear(x, z) || (POND && Math.hypot(x - POND.x, z - POND.z) < POND.r + 6)) continue;
     if (out.some(p => Math.hypot(x - p.x, z - p.z) < 30)) continue;
     out.push({ x, z, i, s: .9 + rnd() * .4 });
   }
