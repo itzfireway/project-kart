@@ -176,6 +176,9 @@
   .touchOnly { display: none; }
   body.touch .touchOnly { display: block; }
   body.touch div.touchOnly.levels { display: grid; }
+  #steerStyles button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px 7px; font-weight: 700; }
+  #steerStyles svg { width: 100%; max-width: 86px; height: auto; color: #fff; }
+  #steerStyles button[aria-pressed=true] svg { color: var(--hot); }
   .wideBtn { width: 100%; margin-top: 8px; padding: 9px; font-size: 14px; font-weight: 700; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
   #ctlMsg { margin: 6px 0 0; font-size: 12px; color: var(--dim); }
   #ctlMsg:empty { display: none; }
@@ -341,11 +344,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.1';
+const BUILD = '2026-11-16.2';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Phone controls now show a picture of each steering style so you can see what you are picking',
     'Phone controls: pick your steering (Slider, Joystick, Floating stick, Arrows or Tilt) and move or resize every button',
   ]],
   ['15 Nov 2026', [
@@ -3611,6 +3615,26 @@ const STEER_HELP = {
   arrows: 'Hold the arrows to steer.',
   tilt: 'Tilt your phone like a steering wheel to steer.',
 };
+// Little pictures of each steering style for the menu (drawn in the button's text colour)
+const STEER_PICS = {
+  slider: `<rect x="6" y="15" width="68" height="24" rx="12" fill="currentColor" fill-opacity=".12" stroke="currentColor" stroke-opacity=".5" stroke-width="2"/>
+    <path d="M14 27l6-4v8zM66 27l-6-4v8z" fill="currentColor" opacity=".7"/><circle cx="48" cy="27" r="10" fill="currentColor"/>
+    <path d="M30 27h8m-3-3l3 3-3 3" stroke="currentColor" stroke-width="1.8" fill="none" opacity=".6"/>`,
+  stick: `<circle cx="40" cy="27" r="21" fill="currentColor" fill-opacity=".12" stroke="currentColor" stroke-opacity=".5" stroke-width="2"/>
+    <circle cx="40" cy="27" r="13" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="1.5"/><circle cx="32" cy="27" r="9" fill="currentColor"/>
+    <path d="M8 27l5-4v8zM72 27l-5-4v8z" fill="currentColor" opacity=".6"/>`,
+  float: `<rect x="3" y="4" width="74" height="46" rx="7" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="2"/>
+    <rect x="8" y="9" width="30" height="36" rx="4" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-opacity=".45" stroke-width="1.5" stroke-dasharray="3 3"/>
+    <circle cx="23" cy="31" r="10" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-opacity=".6" stroke-width="1.5"/><circle cx="26" cy="31" r="5" fill="currentColor"/>
+    <path d="M48 20l6-6m0 0h-4m4 0v4" stroke="currentColor" stroke-opacity=".5" stroke-width="1.5" fill="none"/><circle cx="61" cy="34" r="7" fill="none" stroke="currentColor" stroke-opacity=".4" stroke-width="1.5"/>`,
+  arrows: `<circle cx="21" cy="27" r="16" fill="currentColor" fill-opacity=".12" stroke="currentColor" stroke-opacity=".5" stroke-width="2"/>
+    <circle cx="59" cy="27" r="16" fill="currentColor" stroke="currentColor" stroke-width="2"/>
+    <path d="M14 27l9-7v14z" fill="currentColor"/><path d="M66 27l-9-7v14z" fill="#14161d"/>`,
+  tilt: `<g transform="rotate(-20 40 28)"><rect x="18" y="14" width="44" height="26" rx="5" fill="currentColor" fill-opacity=".12" stroke="currentColor" stroke-width="2"/>
+    <circle cx="57" cy="27" r="1.6" fill="currentColor"/></g>
+    <path d="M10 18a32 32 0 0 0 0 20M70 38a32 32 0 0 0 0-20" stroke="currentColor" stroke-opacity=".6" stroke-width="2" fill="none"/>
+    <path d="M7 36l3 4 3-4M67 20l3-4 3 4" stroke="currentColor" stroke-opacity=".6" stroke-width="2" fill="none"/>`,
+};
 const PAD_IDS = ['steerPad', 'driftBtn', 'brakeBtn', 'itemBtn', 'pauseBtn', 'resetBtn', 'muteBtn'];
 const ctl = { style: 'slider', land: {}, port: {} };
 try { Object.assign(ctl, JSON.parse(localStorage.getItem('kart-controls') || '{}')); } catch (e) {}
@@ -3707,7 +3731,7 @@ function setSteerStyle(style) {
 }
 for (const [style, name] of Object.entries(STEER_STYLES)) {
   const btn = document.createElement('button');
-  btn.textContent = name; btn.dataset.style = style;
+  btn.innerHTML = `<svg viewBox="0 0 80 54" aria-hidden="true">${STEER_PICS[style]}</svg>${name}`; btn.dataset.style = style;
   btn.onclick = () => {
     // iPhones ask for permission to read the tilt, and only from a tap
     if (style === 'tilt' && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
