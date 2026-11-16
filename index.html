@@ -50,7 +50,8 @@
   body.racing #panel, body.racing h1 { display: none; }
   body.racing #hud { display: block; }
   body.racing canvas { cursor: default; }
-  #tl { position: absolute; top: 14px; left: 20px; }
+  #posBox { position: absolute; top: 14px; left: 20px; }
+  #lapBox { position: absolute; top: 88px; left: 20px; }
   #pos { font-size: 70px; font-weight: 900; line-height: 1; color: var(--hot); }
   #pos sup { font-size: 26px; }
   #lap { font-size: 22px; text-transform: uppercase; }
@@ -164,7 +165,8 @@
     body.touch #itemBtn { right: calc(30px + env(safe-area-inset-right)); bottom: calc(222px + env(safe-area-inset-bottom)); width: 72px; height: 72px; }
     body.touch #rotateTip { display: block; margin-top: 8px; color: var(--hot); }
   }
-  body.touch #tl { top: calc(8px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); }
+  body.touch #posBox { top: calc(8px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); }
+  body.touch #lapBox { top: calc(54px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); }
   body.touch #pos { font-size: 42px; }
   body.touch #pos sup { font-size: 16px; }
   body.touch #lap { font-size: 15px; }
@@ -204,9 +206,10 @@
   /* Move & resize controls: the pads show over the garage and can be dragged anywhere */
   body.editPads #panel, body.editPads h1 { display: none; }
   body.editPads #hud { display: block; pointer-events: auto; background: rgba(10, 12, 18, .35); }
-  body.editPads #hud > :not(#pads):not(#dash), body.editPads #floatZone { display: none; }
-  body.editPads #dash { outline: 2px dashed rgba(255, 255, 255, .55); outline-offset: 4px; border-radius: 4px; touch-action: none; }
-  body.editPads #dash.sel { outline: 3px solid var(--hot); }
+  body.editPads #hud > :not(#pads):not([data-pad]), body.editPads #floatZone { display: none; }
+  body.editPads #hud > [data-pad] { display: block; outline: 2px dashed rgba(255, 255, 255, .55); outline-offset: 4px; border-radius: 4px; touch-action: none; }
+  body.editPads #hud > [data-pad].sel { outline: 3px solid var(--hot); }
+  body.editPads #map { background: rgba(255, 255, 255, .08); }
   body.editPads #charge { width: 60% !important; background: var(--hot); }
   body.editPads #pads [data-pad] { pointer-events: auto; opacity: 1; outline: 2px dashed rgba(255, 255, 255, .55); outline-offset: 3px; }
   body.editPads #pads [data-pad].sel { outline: 3px solid var(--hot); }
@@ -309,13 +312,14 @@
   <div id="lights" hidden><i></i><i></i><i></i></div>
   <div id="item" hidden><span id="itemIcon"></span><small id="itemCount"></small><span id="itemName"></span></div>
   <div id="item2" hidden><span id="item2Icon"></span><small id="item2Count"></small></div>
-  <div id="tl"><div id="pos"></div><div id="lap"></div><div id="clock"></div></div>
+  <div id="posBox" data-pad="Place"><div id="pos"></div></div>
+  <div id="lapBox" data-pad="Lap &amp; time"><div id="lap"></div><div id="clock"></div></div>
   <ol id="board"></ol>
   <div id="big"></div>
   <div id="banner"></div>
   <div id="wrong" hidden>Wrong way</div>
   <div id="help">W / &uarr; go &nbsp; A D / &larr; &rarr; steer &nbsp; S / &darr; brake &nbsp; Shift or Space drift &nbsp; E use item &nbsp; R back on track &nbsp; Esc pause &nbsp; M mute</div>
-  <canvas id="map" width="190" height="190"></canvas>
+  <canvas id="map" width="190" height="190" data-pad="Map"></canvas>
   <div id="dash" data-pad="Speed &amp; boost"><b id="speed">0</b> km/h<div id="chargeBar"><i id="charge"></i></div></div>
   <div id="pads">
     <div id="floatZone"></div>
@@ -355,11 +359,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.11';
+const BUILD = '2026-11-16.12';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Phones: the map, your place and the lap counter can now be moved and resized in Move & resize controls',
+    'Coral Tunnel: every corner is smooth and round now',
     'Coral Tunnel: a new layout like the Bahrain circuit, with a twisty start straight on the beach',
     'Coral Tunnel: the sides of the road in the tunnel are solid now, so you no longer fall through them',
     'New track: Coral Tunnel. Start on a sunny beach, then dive into a see-through tunnel under the sea with coral, fish, sharks and a whale. Grand Prix is now five tracks',
@@ -1271,7 +1277,7 @@ const TRACKS = {
   },
   sea: {
     // Layout traced from a Bahrain International Circuit map the user sent, with esses on the start straight
-    name: 'Coral Tunnel', icon: '🐠', blurb: 'Start on a sunny beach, then dive into a glass tunnel under the sea', theme: 'sea', pond: null, tube: true,
+    name: 'Coral Tunnel', icon: '🐠', blurb: 'Start on a sunny beach, then dive into a glass tunnel under the sea', theme: 'sea', pond: null, tube: true, minRadius: 24,
     pts: [
       [-19, 165, 3], [-56, 158, 3], [-94, 172, 3], [-131, 158, 3], [-162, 165, 3], [-180, 159, 2], [-172, 131, 0], [-176, 103, -4],
       [-177, 50, -12], [-174, -51, -20], [-168, -134, -22], [-160, -167, -22], [-150, -178, -22], [-135, -165, -22], [-109, -134, -22], [-87, -114, -23],
@@ -1303,6 +1309,41 @@ const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
+// Eases every corner tighter than R (metres) into a round curve: any point that bends too sharply is nudged towards
+// its neighbours, a little at a time, until none do. Then the points are spaced evenly again.
+function roundCorners(R) {
+  const K = Math.max(3, Math.round(6 / DS)), px = Float64Array.from(cx), pz = Float64Array.from(cz), qx = new Float64Array(N), qz = new Float64Array(N);
+  const radius = i => {
+    const a = wrapI(i - K), b = wrapI(i + K), ax = px[a] - px[i], az = pz[a] - pz[i], bx = px[b] - px[i], bz = pz[b] - pz[i];
+    const cr = Math.abs(ax * bz - az * bx);
+    return cr < 1e-9 ? 1e9 : Math.hypot(ax, az) * Math.hypot(bx, bz) * Math.hypot(px[b] - px[a], pz[b] - pz[a]) / (2 * cr);
+  };
+  for (let it = 0; it < 4000; it++) {
+    let moved = false;
+    for (let i = 0; i < N; i++) {
+      if (radius(i) >= R) continue;
+      moved = true;
+      // Pull this point and its close neighbours gently towards the middle of the bend
+      for (let j = -K; j <= K; j++) {
+        const q = wrapI(i + j), a = wrapI(q - 1), b = wrapI(q + 1), f = .08 * (1 - Math.abs(j) / (K + 1));
+        px[q] += ((px[a] + px[b]) / 2 - px[q]) * f; pz[q] += ((pz[a] + pz[b]) / 2 - pz[q]) * f;
+      }
+    }
+    if (!moved) break;
+  }
+  // Respace evenly along the new line (heights carried along)
+  const cum = new Float64Array(N + 1);
+  for (let i = 1; i <= N; i++) cum[i] = cum[i - 1] + Math.hypot(px[i % N] - px[i - 1], pz[i % N] - pz[i - 1]);
+  const oy = Float32Array.from(cy);
+  DS = cum[N] / N;
+  for (let i = 0, k = 0; i < N; i++) {
+    const at = i * DS;
+    while (cum[k + 1] < at) k++;
+    const t = (at - cum[k]) / ((cum[k + 1] - cum[k]) || 1), a = k % N, b = (k + 1) % N;
+    qx[i] = px[a] + (px[b] - px[a]) * t; qz[i] = pz[a] + (pz[b] - pz[a]) * t; cy[i] = oy[a] + (oy[b] - oy[a]) * t;
+  }
+  cx.set(qx); cz.set(qz);
+}
 function loadTrack(id) {
   if (!TRACKS[id]) id = 'meadow';
   if (TRACK_ID === id) return;
@@ -1314,6 +1355,7 @@ function loadTrack(id) {
   for (let i = 0; i < N; i++) { cx[i] = pts[i].x; cz[i] = pts[i].z; }
   // Average the heights so the road never kinks over a control point
   for (let i = 0; i < N; i++) { let s = 0; for (let j = -25; j <= 25; j++) s += pts[wrapI(i + j)].y; cy[i] = s / 51; }
+  if (TRACK.minRadius) roundCorners(TRACK.minRadius);
   for (let i = 0; i < N; i++) {
     const a = wrapI(i - 1), b = wrapI(i + 1), dx = cx[b] - cx[a], dz = cz[b] - cz[a], l = Math.hypot(dx, dz);
     tx[i] = dx / l; tz[i] = dz / l;
@@ -4078,7 +4120,7 @@ const STEER_PICS = {
     <path d="M10 18a32 32 0 0 0 0 20M70 38a32 32 0 0 0 0-20" stroke="currentColor" stroke-opacity=".6" stroke-width="2" fill="none"/>
     <path d="M7 36l3 4 3-4M67 20l3-4 3 4" stroke="currentColor" stroke-opacity=".6" stroke-width="2" fill="none"/>`,
 };
-const PAD_IDS = ['steerPad', 'driftBtn', 'brakeBtn', 'itemBtn', 'pauseBtn', 'resetBtn', 'muteBtn', 'dash'];
+const PAD_IDS = ['steerPad', 'driftBtn', 'brakeBtn', 'itemBtn', 'pauseBtn', 'resetBtn', 'muteBtn', 'dash', 'map', 'posBox', 'lapBox'];
 const ctl = { style: 'slider', land: {}, port: {} };
 try { Object.assign(ctl, JSON.parse(localStorage.getItem('kart-controls') || '{}')); } catch (e) {}
 if (!STEER_STYLES[ctl.style]) ctl.style = 'slider';
@@ -4214,7 +4256,15 @@ function selectPad(el) {
 function editPads(on) {
   releaseTouch();
   document.body.classList.toggle('editPads', on);
-  if (on) { $('itemBtn').hidden = false; fillLayout(); } else saveControls();
+  if (on) {
+    $('itemBtn').hidden = false;
+    // Outside a race the place, lap and map are empty, so show sample ones to drag about
+    if (!race) {
+      $('pos').innerHTML = '1<sup>st</sup>'; $('lap').textContent = 'Lap 1/3'; $('clock').textContent = '0:00.00';
+      drawMapBase(); const m = $('map').getContext('2d'); m.clearRect(0, 0, 190, 190); m.drawImage(mapBase, 0, 0);
+    }
+    fillLayout();
+  } else saveControls();
   selectPad(null);
 }
 $('editPadsBtn').onclick = () => editPads(true);
