@@ -30,6 +30,11 @@
   .swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
   .swatch { aspect-ratio: 1; padding: 0; border: 2px solid transparent; border-radius: 50%; }
   .swatch[aria-pressed=true] { outline: 2px solid var(--hot); outline-offset: 1px; }
+  .mixTabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .mixTabs button { display: flex; align-items: center; gap: 7px; padding: 7px 9px; font-size: 13px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 7px; }
+  .mixTabs button[aria-pressed=true] { border-color: var(--hot); background: rgba(255, 207, 51, .12); }
+  .mixTabs i { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .5); }
+  #wheel { position: static; display: block; width: 170px; height: 170px; margin: 10px auto 2px; touch-action: none; cursor: crosshair; }
   .views { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .views button { padding: 7px 0; font-size: 13px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 7px; }
   label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; font-size: 14px; }
@@ -200,7 +205,10 @@
   /* Move & resize controls: the pads show over the garage and can be dragged anywhere */
   body.editPads #panel, body.editPads h1 { display: none; }
   body.editPads #hud { display: block; pointer-events: auto; background: rgba(10, 12, 18, .35); }
-  body.editPads #hud > :not(#pads), body.editPads #floatZone { display: none; }
+  body.editPads #hud > :not(#pads):not(#dash), body.editPads #floatZone { display: none; }
+  body.editPads #dash { outline: 2px dashed rgba(255, 255, 255, .55); outline-offset: 4px; border-radius: 4px; touch-action: none; }
+  body.editPads #dash.sel { outline: 3px solid var(--hot); }
+  body.editPads #charge { width: 60% !important; background: var(--hot); }
   body.editPads #pads [data-pad] { pointer-events: auto; opacity: 1; outline: 2px dashed rgba(255, 255, 255, .55); outline-offset: 3px; }
   body.editPads #pads [data-pad].sel { outline: 3px solid var(--hot); }
   body.editPads #steerPad[data-style=tilt] { display: block; width: 150px; height: 60px; border-radius: 12px; }
@@ -277,6 +285,9 @@
   <div id="stats"></div>
   <h2>Paint</h2>
   <div class="swatches" id="swatches"></div>
+  <div class="mixTabs"><button id="mixBody" aria-pressed="true"><i></i>Primary</button><button id="mixAccent" aria-pressed="false"><i></i>Secondary</button></div>
+  <canvas id="wheel" width="340" height="340" aria-label="Colour wheel"></canvas>
+  <label>Brightness <input type="range" id="wheelV" min="0" max="100" value="100"></label>
   <h2>Number</h2>
   <label>Race number <input type="number" id="number" min="0" max="99" value="7"></label>
   <h2 class="touchOnly">Phone controls</h2>
@@ -305,7 +316,7 @@
   <div id="wrong" hidden>Wrong way</div>
   <div id="help">W / &uarr; go &nbsp; A D / &larr; &rarr; steer &nbsp; S / &darr; brake &nbsp; Shift or Space drift &nbsp; E use item &nbsp; R back on track &nbsp; Esc pause &nbsp; M mute</div>
   <canvas id="map" width="190" height="190"></canvas>
-  <div id="dash"><b id="speed">0</b> km/h<div id="chargeBar"><i id="charge"></i></div></div>
+  <div id="dash" data-pad="Speed &amp; boost"><b id="speed">0</b> km/h<div id="chargeBar"><i id="charge"></i></div></div>
   <div id="pads">
     <div id="floatZone"></div>
     <div id="steerPad" data-pad="Steering"><span>&#9664;</span><i id="knob"></i><span>&#9654;</span></div>
@@ -344,11 +355,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.3';
+const BUILD = '2026-11-16.5';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Phones: the speed and boost meter can now be moved and resized too, in Move & resize controls',
+    'Colour wheel in the Paint section: pick any primary and secondary colour for your kart',
     'You can now change your name while you are in a room, and everyone sees the new name',
     'Phone controls now show a picture of each steering style so you can see what you are picking',
     'Phone controls: pick your steering (Slider, Joystick, Floating stick, Arrows or Tilt) and move or resize every button',
@@ -650,6 +663,14 @@ const PAINTS = [
   { name: 'Orange', body: 0xf0630f, accent: 0x1b1d26 }, { name: 'Purple', body: 0x7a2fd0, accent: 0x45e0c3 },
   { name: 'Pink', body: 0xf04a9b, accent: 0xffffff }, { name: 'Black', body: 0x1c1e27, accent: 0xff4b3a },
 ];
+// Colours picked on the colour wheel travel as a name like 'c:d8261c:ffffff' (primary, secondary), so saving and
+// online rooms work the same as the named paints
+const hex6 = c => c.toString(16).padStart(6, '0');
+const customPaint = (body, accent) => ({ name: `c:${hex6(body)}:${hex6(accent)}`, body, accent });
+function paintNamed(name) {
+  const m = /^c:([0-9a-f]{6}):([0-9a-f]{6})$/.exec(String(name ?? ''));
+  return m ? customPaint(parseInt(m[1], 16), parseInt(m[2], 16)) : PAINTS.find(p => p.name === name) || PAINTS[0];
+}
 
 // Builds one kart and returns { group, update(dt, speed, steer), dispose() }.
 // speed is in units per second, steer runs from -1 (right) to 1 (left).
@@ -935,7 +956,9 @@ function buildKart({ body = 'sprint', paint = PAINTS[0], number = 7 } = {}) {
     mats.plate.map.dispose();
     Object.values(mats).forEach(m => m.dispose());
   }
-  return { group, update, dispose, paint: paint.body };
+  // Quick colour change while dragging on the colour wheel (the number plate catches up on the next rebuild)
+  function recolor(p) { mats.paint.color.setHex(p.body); mats.suit.color.setHex(p.body); mats.accent.color.setHex(p.accent); }
+  return { group, update, dispose, recolor, paint: paint.body };
 }
 
 // ---------- Garage ----------
@@ -1067,7 +1090,7 @@ try {
 try {
   const mine = JSON.parse(localStorage.getItem('kart-custom') || '{}');
   if (!q.has('body') && BODIES[mine.body]) state.body = mine.body;
-  if (!q.has('paint') && PAINTS.some(p => p.name === mine.paint)) state.paint = PAINTS.find(p => p.name === mine.paint);
+  if (!q.has('paint') && mine.paint) state.paint = paintNamed(mine.paint);
   if (Number.isInteger(mine.number) && mine.number >= 0 && mine.number <= 99) state.number = mine.number;
 } catch (e) {}
 function saveKart() { try { localStorage.setItem('kart-custom', JSON.stringify({ body: state.body, paint: state.paint.name, number: state.number })); } catch (e) {} }
@@ -1084,6 +1107,7 @@ function rebuild() {
   saveKart();
   document.querySelectorAll('.body').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.body));
   document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.paint.name));
+  syncWheel();
   $('stats').innerHTML = Object.entries(BODIES[state.body].stats).map(([k, v]) => `<div class="stat">${k}<div class="bar"><i style="width:${v * 20}%"></i></div></div>`).join('');
   netProfileChanged();
 }
@@ -1109,6 +1133,73 @@ Object.keys(VIEWS).forEach(name => {
   btn.onclick = () => { const [yaw, pitch, dist] = VIEWS[name]; orbit.goal = { yaw, pitch, dist }; turnBox.checked = false; };
   $('views').append(btn);
 });
+
+// Colour wheel: pick Primary or Secondary, then tap or drag on the wheel. Round = colour, distance from the middle =
+// how strong it is, the slider = how bright.
+const wheel = $('wheel'), wctx = wheel.getContext('2d'), wheelV = $('wheelV');
+const wheelPick = { part: 'body', h: 0, s: 1, v: 1, drawnV: -1 };
+function hsvToHex(h, s, v) {
+  const f = n => { const k = (n + h / 60) % 6; return Math.round(255 * (v - v * s * Math.max(0, Math.min(k, 4 - k, 1)))); };
+  return (f(5) << 16) | (f(3) << 8) | f(1);
+}
+function hexToHsv(c) {
+  const r = (c >> 16 & 255) / 255, g = (c >> 8 & 255) / 255, b = (c & 255) / 255;
+  const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  let h = 0;
+  if (d) h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: h * 60, s: mx ? d / mx : 0, v: mx };
+}
+let wheelImg = null;
+function drawWheel() {
+  const W = wheel.width, R = W / 2 - 2;
+  if (wheelPick.drawnV !== wheelPick.v) {
+    wheelImg = wctx.createImageData(W, W);
+    const d = wheelImg.data;
+    for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+      const dx = x + .5 - W / 2, dy = y + .5 - W / 2, r = Math.hypot(dx, dy);
+      if (r > R + 1) continue;
+      const c = hsvToHex((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360, Math.min(1, r / R), wheelPick.v), i = (y * W + x) * 4;
+      d[i] = c >> 16; d[i + 1] = c >> 8 & 255; d[i + 2] = c & 255; d[i + 3] = 255 * Math.min(1, R + 1 - r);
+    }
+    wheelPick.drawnV = wheelPick.v;
+  }
+  wctx.putImageData(wheelImg, 0, 0);
+  const a = wheelPick.h * Math.PI / 180, x = W / 2 + Math.cos(a) * wheelPick.s * R, y = W / 2 + Math.sin(a) * wheelPick.s * R;
+  wctx.lineWidth = 5; wctx.strokeStyle = '#14161d'; wctx.beginPath(); wctx.arc(x, y, 13, 0, Math.PI * 2); wctx.stroke();
+  wctx.lineWidth = 3; wctx.strokeStyle = '#fff'; wctx.stroke();
+}
+// Point the wheel and slider at whichever colour (primary or secondary) is being edited
+function syncWheel() {
+  Object.assign(wheelPick, hexToHsv(state.paint[wheelPick.part]));
+  wheelV.value = Math.round(wheelPick.v * 100);
+  $('mixBody').setAttribute('aria-pressed', wheelPick.part === 'body');
+  $('mixAccent').setAttribute('aria-pressed', wheelPick.part === 'accent');
+  $('mixBody').querySelector('i').style.background = '#' + hex6(state.paint.body);
+  $('mixAccent').querySelector('i').style.background = '#' + hex6(state.paint.accent);
+  drawWheel();
+}
+function wheelColour(done) {
+  const c = hsvToHex(wheelPick.h, wheelPick.s, wheelPick.v);
+  state.paint = customPaint(wheelPick.part === 'body' ? c : state.paint.body, wheelPick.part === 'accent' ? c : state.paint.accent);
+  if (done) { const keep = { ...wheelPick }; rebuild(); Object.assign(wheelPick, keep); wheelV.value = Math.round(keep.v * 100); drawWheel(); return; }
+  kart.recolor(state.paint);
+  $(wheelPick.part === 'body' ? 'mixBody' : 'mixAccent').querySelector('i').style.background = '#' + hex6(c);
+  drawWheel();
+}
+function wheelAt(e) {
+  const b = wheel.getBoundingClientRect(), dx = e.clientX - b.left - b.width / 2, dy = e.clientY - b.top - b.height / 2;
+  wheelPick.h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  wheelPick.s = Math.min(1, Math.hypot(dx, dy) / (b.width / 2 - 1));
+  if (wheelPick.v < .05) { wheelPick.v = 1; wheelV.value = 100; }   // picking on an all-black wheel would do nothing
+}
+wheel.onpointerdown = e => { wheel.setPointerCapture(e.pointerId); wheelAt(e); wheelColour(false); };
+wheel.onpointermove = e => { if (wheel.hasPointerCapture(e.pointerId)) { wheelAt(e); wheelColour(false); } };
+wheel.onpointerup = wheel.onpointercancel = e => { if (!wheel.hasPointerCapture(e.pointerId)) return; wheel.releasePointerCapture(e.pointerId); wheelColour(true); };
+wheelV.oninput = () => { wheelPick.v = wheelV.value / 100; wheelColour(false); };
+wheelV.onchange = () => wheelColour(true);
+$('mixBody').onclick = () => { wheelPick.part = 'body'; syncWheel(); };
+$('mixAccent').onclick = () => { wheelPick.part = 'accent'; syncWheel(); };
+
 numberBox.value = state.number;
 numberBox.oninput = () => { state.number = Math.min(99, Math.max(0, parseInt(numberBox.value, 10) || 0)); rebuild(); };
 
@@ -3636,7 +3727,7 @@ const STEER_PICS = {
     <path d="M10 18a32 32 0 0 0 0 20M70 38a32 32 0 0 0 0-20" stroke="currentColor" stroke-opacity=".6" stroke-width="2" fill="none"/>
     <path d="M7 36l3 4 3-4M67 20l3-4 3 4" stroke="currentColor" stroke-opacity=".6" stroke-width="2" fill="none"/>`,
 };
-const PAD_IDS = ['steerPad', 'driftBtn', 'brakeBtn', 'itemBtn', 'pauseBtn', 'resetBtn', 'muteBtn'];
+const PAD_IDS = ['steerPad', 'driftBtn', 'brakeBtn', 'itemBtn', 'pauseBtn', 'resetBtn', 'muteBtn', 'dash'];
 const ctl = { style: 'slider', land: {}, port: {} };
 try { Object.assign(ctl, JSON.parse(localStorage.getItem('kart-controls') || '{}')); } catch (e) {}
 if (!STEER_STYLES[ctl.style]) ctl.style = 'slider';
@@ -3909,7 +4000,6 @@ addEventListener('resize', () => {
 const ROOM_PREFIX = 'project-kart-', MAX_PLAYERS = 8;
 const SEND_MS = 66, RENDER_DELAY = 170, COAST_MS = 300, READY_WAIT = 10000;
 const esc = t => String(t).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-const paintNamed = name => PAINTS.find(p => p.name === name) || PAINTS[0];
 const round = (v, places) => +v.toFixed(places);
 const netClock = () => race && race.goAt ? (performance.now() - race.goAt) / 1000 - 3.6 : -3.6;
 
