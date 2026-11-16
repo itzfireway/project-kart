@@ -359,11 +359,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.12';
+const BUILD = '2026-11-16.13';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Coral Tunnel: no more sand poking into the tunnel where it dips down from the beach',
     'Phones: the map, your place and the lap counter can now be moved and resized in Move & resize controls',
     'Coral Tunnel: every corner is smooth and round now',
     'Coral Tunnel: a new layout like the Bahrain circuit, with a twisty start straight on the beach',
@@ -1789,6 +1790,12 @@ function buildWorld() {
     if (near.d < HW + 1.5) h -= .28;
     // The tunnel road climbs and dives steeply, so keep the sand well under it (the walkway covers the gap)
     if (TUBE[near.i] && near.d < TUBE_R - .8) h -= .5 + Math.abs(cy[wrapI(near.i + 4)] - cy[wrapI(near.i - 4)]) / (8 * DS) * 5;
+    // No sand inside the glass: out to a grid square past the glass, the ground stays below the tunnel floor
+    // (the ground is a 3m grid, so without this a slope outside the tunnel leans in through the glass)
+    if (TUBE[near.i]) {
+      const l = locate(x, z, near.i, 8);
+      if (TUBE[l.i] && l.d < TUBE_R + CELL + 1) h = Math.min(h, cy[l.i] - .6 - Math.abs(cy[wrapI(l.i + 3)] - cy[wrapI(l.i - 3)]) * 1.5);
+    }
     GROUND[i] = h;
     p.setY(i, h);
     c.copy(grassA).lerp(grassB, .5 + .5 * Math.sin(x * .09 + Math.sin(z * .07) * 2) * Math.cos(z * .08));
@@ -2500,7 +2507,7 @@ function buildSea(w, rnd, nearStand, lam, ripple, dot) {
   }) }), rail = lam({ color: 0x1b6f9c, side: THREE.DoubleSide });
   for (const [a, b] of tubeRuns) for (const sd of [-1, 1]) {
     // The walkway runs on through the funnels at each end, so there's solid floor wherever the ground was dug away
-    ribbon(a - TUBE_FUNNEL, b + TUBE_FUNNEL, sd * (sd > 0 ? TUBE_R - .2 : HW + .4), sd * (sd > 0 ? HW + .4 : TUBE_R - .2), .03, grate, Math.round((b - a + 2 * TUBE_FUNNEL) * DS / 3), w);
+    ribbon(a - TUBE_FUNNEL, b + TUBE_FUNNEL, sd * (sd > 0 ? TUBE_R - .2 : HW - .05), sd * (sd > 0 ? HW - .05 : TUBE_R - .2), .02, grate, Math.round((b - a + 2 * TUBE_FUNNEL) * DS / 3), w);
     // The rail: a low wall at the foot of the glass
     const pos = [], idx = [];
     for (let i = a; i <= b; i++) { const lat = sd * (TUBE_R - .25), x = cx[i] + nxOf(i) * lat, z = cz[i] + nzOf(i) * lat; pos.push(x, cy[i] - 2, z, x, cy[i] + .8, z); }
