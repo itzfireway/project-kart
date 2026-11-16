@@ -175,7 +175,7 @@
   body.touch #wrong { font-size: 28px; }
   body.touch #help { bottom: auto; top: 58%; padding: 0 20px; font-size: 14px; }
   body.touch #map { inset: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) auto auto; width: 106px; height: 106px; }
-  body.touch #dash { left: calc(16px + env(safe-area-inset-left)); right: auto; bottom: calc(112px + env(safe-area-inset-bottom)); width: 120px; text-align: left; font-size: 13px; }
+  body.touch #dash { left: 50%; right: auto; bottom: calc(10px + env(safe-area-inset-bottom)); width: 120px; transform: translateX(-50%); text-align: center; font-size: 13px; }
   body.touch #dash b { font-size: 30px; }
   /* Steering styles, picked under Phone controls in the menu */
   .touchOnly { display: none; }
@@ -199,7 +199,6 @@
   #steerPad[data-style=arrows] span:last-child { right: 0; }
   #steerPad[data-style=arrows] span.held { color: #14161d; background: var(--hot); border-color: var(--hot); }
   body.touch #steerPad[data-style=tilt] { display: none; }
-  body.touch[data-steer=stick] #dash, body.touch[data-steer=float] #dash { bottom: calc(172px + env(safe-area-inset-bottom)); }
   #floatZone { display: none; position: absolute; left: 0; top: calc(64px + env(safe-area-inset-top)); bottom: 0; width: 50%; pointer-events: auto; touch-action: none; }
   body.touch[data-steer=float] #floatZone { display: block; }
   /* Move & resize controls: the pads show over the garage and can be dragged anywhere */
@@ -356,11 +355,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.7';
+const BUILD = '2026-11-16.8';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Phones: the speed and boost meter now sits at the bottom middle of the screen',
     'Time trial is now Sprint kart only, so times are fair',
     'Meadow Ring: more room before the rail on the inside of the bend before the last two corners',
     'New mode: Time trial. Just you and the clock for 3 laps, and your best lap is your score. Records are kept for every track',
@@ -3776,6 +3776,8 @@ const PAD_IDS = ['steerPad', 'driftBtn', 'brakeBtn', 'itemBtn', 'pauseBtn', 'res
 const ctl = { style: 'slider', land: {}, port: {} };
 try { Object.assign(ctl, JSON.parse(localStorage.getItem('kart-controls') || '{}')); } catch (e) {}
 if (!STEER_STYLES[ctl.style]) ctl.style = 'slider';
+// The speed meter's home moved to the bottom middle (Nov 2026): forget any old saved spot for it once
+if (!ctl.dashMid) { delete ctl.land.dash; delete ctl.port.dash; ctl.dashMid = true; }
 function saveControls() { try { localStorage.setItem('kart-controls', JSON.stringify(ctl)); } catch (e) {} }
 const padSide = () => innerHeight > innerWidth ? 'port' : 'land';
 // A saved control sits with its centre at x, y (fractions of the screen), scaled by s. No saved spot = the default layout.
