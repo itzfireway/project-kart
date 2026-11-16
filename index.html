@@ -355,11 +355,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.5';
+const BUILD = '2026-11-16.6';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'New mode: Time trial. Just you and the clock for 3 laps, and your best lap is your score. Records are kept for every track',
     'Phones: the speed and boost meter can now be moved and resized too, in Move & resize controls',
     'Colour wheel in the Paint section: pick any primary and secondary colour for your kart',
     'You can now change your name while you are in a room, and everyone sees the new name',
@@ -1084,7 +1085,7 @@ try {
   if (typeof saved.music === 'boolean') state.music = saved.music;
   if (WEATHERS[saved.weather]) state.weather = saved.weather;
   if (TRACKS[saved.track]) state.track = saved.track;
-  if (saved.mode === 'gp') state.mode = 'gp';
+  if (saved.mode === 'gp' || saved.mode === 'tt') state.mode = saved.mode;
 } catch (e) {}
 // Your kart (body, paint, race number) is remembered between visits; ?body= / ?paint= in the link still win
 try {
@@ -2786,7 +2787,8 @@ function startRace(plan) {
   }
   document.body.classList.add('racing');
   $('overlay').className = '';
-  const karts = plan ? onlineGrid(plan) : soloGrid(), you = karts.find(k => k.isPlayer);
+  const tt = !plan && !gp && state.mode === 'tt';
+  const karts = plan ? onlineGrid(plan) : tt ? [makeRacer('You', state, true)] : soloGrid(), you = karts.find(k => k.isPlayer);
   karts.forEach((k, g) => {
     const back = 9 + g * 3.6;
     placeOnTrack(k, -Math.round(back / DS), g % 2 ? -4 : 4);
@@ -2795,12 +2797,15 @@ function startRace(plan) {
   });
   race = {
     karts, you, online: !!plan, waiting: !!plan, goAt: 0, t: -3.6, over: false, paused: false, shownAt: 0, camYaw: you.yaw, camX: 0, camY: 0, camZ: 0, lastBeep: 4, lapShown: 1, doneT: 0,
-    laps: plan ? plan.laps : state.laps, items: plan ? plan.items : state.items, weather: plan ? plan.weather || 'sunny' : state.weather, rainT: 0, fx: [], shake: 0, place: 0, itemShown: null,
+    laps: plan ? plan.laps : tt ? TT_LAPS : state.laps, items: plan ? plan.items : tt ? false : state.items,
+    tt: tt ? { rec: ttRecords()[trackId] || null, track: trackId } : null, weather: plan ? plan.weather || 'sunny' : state.weather, rainT: 0, fx: [], shake: 0, place: 0, itemShown: null,
     // Grand Prix round and points so far, from your own cup or from the host's
     gp: plan ? plan.gp || null : gp ? { round: gp.round, pts: gp.pts, order: gp.order } : null,
   };
   // Track name on the way in, and which race of the cup this is
-  $('banner').innerHTML = `${TRACK.icon} ${TRACK.name}${race.gp ? `<div style="font-size:.55em">Grand Prix · race ${race.gp.round + 1} of ${GP_TRACKS.length}</div>` : ''}`;
+  const sub = race.gp ? `Grand Prix · race ${race.gp.round + 1} of ${GP_TRACKS.length}`
+    : race.tt ? `Time trial${race.tt.rec ? ` · best lap to beat ${fmtTime(race.tt.rec.lap)}` : ''}` : '';
+  $('banner').innerHTML = `${TRACK.icon} ${TRACK.name}${sub ? `<div style="font-size:.55em">${sub}</div>` : ''}`;
   $('banner').className = 'on';
   clearTimeout(trackBannerTimer);
   trackBannerTimer = setTimeout(() => { if (race && !race.waiting && race.lapShown === 1) $('banner').className = ''; }, 2800);
@@ -3118,7 +3123,17 @@ function finishPlayer() {
   r.you.wantDrift = false; r.you.drift = 0;
   r.doneT = r.t;
   setBig('FINISH!');
-  const place = ranking().indexOf(r.you) + 1;
+  let place = ranking().indexOf(r.you) + 1;
+  if (r.tt) {
+    // Save any new records; confetti if you set one
+    const recs = ttRecords(), old = recs[r.tt.track] || {}, lap = Math.min(...r.you.laps), total = r.you.finish;
+    r.tt.newLap = !old.lap || lap < old.lap; r.tt.newTotal = !old.total || total < old.total;
+    r.tt.old = old.lap ? old : null;
+    recs[r.tt.track] = { lap: r.tt.newLap ? lap : old.lap, total: r.tt.newTotal ? total : old.total };
+    saveTtRecords(recs);
+    r.tt.rec = recs[r.tt.track];
+    place = r.tt.newLap || r.tt.newTotal ? 1 : 4;
+  }
   sound.stopMusic();
   sound.sfx(place <= 3 ? 'win' : 'finish');
   // Confetti for a podium finish
@@ -3142,7 +3157,26 @@ function flash(kind) {
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
+function ttBoard(you, r) {
+  const best = you.laps.length ? Math.min(...you.laps) : null, rec = r.tt.rec;
+  const now = you.finish === null ? (r.t > 0 ? r.t - you.lapStart : 0) : null;
+  return (now !== null ? `<li class="me">Lap ${you.lap} ${fmtTime(now)}</li>` : '') +
+    `<li>Best lap ${best !== null ? fmtTime(best) : '-'}</li><li>Record ${rec ? fmtTime(rec.lap) : '-'}</li>`;
+}
+function drawTtResults() {
+  const t = race.tt, you = race.you, best = Math.min(...you.laps);
+  const head = t.newLap ? '🏆 New lap record!' : t.newTotal ? '🏆 New 3-lap record!' : 'Time trial done';
+  const rows = you.laps.map((l, i) => `<tr class="${l === best ? 'me' : ''}"><td style="white-space:nowrap">Lap ${i + 1}</td><td>${fmtTime(l)}${l === best ? ' ⭐' : ''}</td></tr>`).join('') +
+    `<tr><td>Total</td><td>${fmtTime(you.finish)}</td></tr>`;
+  const old = t.old ? `<p class="best">Old records: best lap ${fmtTime(t.old.lap)}, 3 laps ${t.old.total ? fmtTime(t.old.total) : '-'}</p>` : '';
+  $('overlayBody').innerHTML = `<h3>${head}</h3><p class="best">Your score (best lap): <b style="color:var(--hot)">${fmtTime(best)}</b></p><table>${rows}</table>${old}`;
+  $('resume').hidden = true;
+  $('again').hidden = false;
+  $('again').textContent = 'Try again';
+  setQuitLabel();
+}
 function drawResults() {
+  if (race.tt) return drawTtResults();
   const place = ranking().indexOf(race.you) + 1;
   const head = place === 1 ? 'You win!' : place <= 3 ? `${ordinal(place)} place!` : `You came ${ordinal(place)}`;
   const rows = ranking().map((k, i) => {
@@ -3241,7 +3275,7 @@ function drawHud() {
   if (place !== r.place) {
     r.place = place;
     const p = $('pos');
-    p.innerHTML = `${place}<sup>${ordinal(place).slice(-2)}</sup>`;
+    p.innerHTML = r.tt ? '⏱️' : `${place}<sup>${ordinal(place).slice(-2)}</sup>`;
     p.classList.remove('pop'); void p.offsetWidth; p.classList.add('pop');
   }
   $('lap').textContent = `Lap ${you.lap}/${r.laps}`;
@@ -3286,7 +3320,7 @@ function drawHud() {
   const charge = you.drift ? clamp(you.driftT / 1.7, 0, 1) : 0;
   $('charge').style.width = charge * 100 + '%';
   $('charge').style.background = you.driftT > 1.7 ? '#ff8a1f' : you.driftT > .75 ? '#39b6ff' : '#cfd3dc';
-  const board = order.map((k, i) => `<li class="${k.isPlayer ? 'me' : ''}">${i + 1} ${esc(k.name)}</li>`).join('');
+  const board = r.tt ? ttBoard(you, r) : order.map((k, i) => `<li class="${k.isPlayer ? 'me' : ''}">${i + 1} ${esc(k.name)}</li>`).join('');
   if (board !== r.board) $('board').innerHTML = r.board = board;
   if (r.t < 0) setBig(r.t > -3 ? Math.ceil(-r.t) : '');
   else if (r.t < 1 && !r.over) setBig('GO!');
@@ -3295,7 +3329,8 @@ function drawHud() {
   if (you.lap !== r.lapShown && !r.over) {
     r.lapShown = you.lap;
     const last = you.laps[you.laps.length - 1], best = Math.min(...you.laps);
-    const time = last ? `<div style="font-size:.55em">${fmtTime(last)}${last === best && you.laps.length > 1 ? ' · best lap!' : ''}</div>` : '';
+    const record = r.tt && last && (!r.tt.rec || last < r.tt.rec.lap);
+    const time = last ? `<div style="font-size:.55em">${fmtTime(last)}${record ? ' · new record!' : last === best && you.laps.length > 1 ? ' · best lap!' : ''}</div>` : '';
     $('banner').innerHTML = (you.lap === r.laps ? 'Final lap!' : `Lap ${you.lap}`) + time;
     $('banner').className = 'on';
     sound.sfx(you.lap === r.laps ? 'final' : 'lap');
@@ -3923,17 +3958,31 @@ LAP_CHOICES.forEach(n => {
   const btn = document.createElement('button');
   btn.textContent = n;
   btn.setAttribute('aria-pressed', state.laps === n);
-  btn.onclick = () => { state.laps = n; saveRaceOptions(); document.querySelectorAll('#laps button').forEach(b => b.setAttribute('aria-pressed', b === btn)); };
+  btn.onclick = () => { state.laps = n; saveRaceOptions(); drawTrackPicker(); };
   $('laps').append(btn);
 });
-const MODES = { race: 'Single race', gp: '🏆 Grand Prix' };
+const MODES = { race: 'Single race', gp: '🏆 Grand Prix', tt: '⏱️ Time trial' };
+// Time trial: you alone on the track, 3 laps, no lucky blocks. Your best lap and best 3-lap time on each track are kept.
+const TT_LAPS = 3;
+function ttRecords() { try { return JSON.parse(localStorage.getItem('kart-tt') || '{}'); } catch (e) { return {}; } }
+function saveTtRecords(r) { try { localStorage.setItem('kart-tt', JSON.stringify(r)); } catch (e) {} }
 function drawTrackPicker() {
   const inRoom = !!net.room, cup = state.mode === 'gp', guest = inRoom && !net.host, locked = cup || guest;
+  if (inRoom && state.mode === 'tt') state.mode = 'race';   // time trials are on your own
+  const tt = state.mode === 'tt';
   document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.mode));
-  document.querySelectorAll('#modes button').forEach(b => { b.disabled = guest; b.style.opacity = guest ? .55 : ''; });
+  document.querySelectorAll('#modes button').forEach(b => { const off = guest || inRoom && b.dataset.id === 'tt'; b.disabled = off; b.style.opacity = off ? .55 : ''; });
+  // Time trials are always 3 laps with no lucky blocks
+  document.querySelectorAll('#laps button').forEach(b => { b.disabled = tt; b.style.opacity = tt ? .55 : ''; b.setAttribute('aria-pressed', +b.textContent === (tt ? TT_LAPS : state.laps)); });
+  $('itemsBox').disabled = tt; $('itemsBox').checked = tt ? false : state.items;
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !locked && b.dataset.id === state.track); b.disabled = locked; b.style.opacity = locked ? .55 : ''; });
-  $('gpNote').hidden = !cup || guest;
-  $('gpNote').textContent = `Race all four tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
+  $('gpNote').hidden = !(cup || tt) || guest;
+  if (cup) $('gpNote').textContent = `Race all four tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
+  else if (tt) {
+    const rec = ttRecords()[state.track];
+    $('gpNote').textContent = `Just you and the clock: 3 laps, no CPUs, no lucky blocks. Your best lap is your score. ` +
+      (rec ? `Your records on ${TRACKS[state.track].name}: best lap ${fmtTime(rec.lap)}, best 3 laps ${rec.total ? fmtTime(rec.total) : '-'}.` : `No time set on ${TRACKS[state.track].name} yet.`);
+  }
   // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow. In Canyon Run it never
   // rains: the wind picks up sand instead, and a thunderstorm becomes a sandstorm.
   const th = !cup && TRACKS[state.track].theme, names = th === 'snow' ? SNOW_WEATHER : th === 'desert' ? SAND_WEATHER : null;
@@ -3960,7 +4009,7 @@ Object.entries(WEATHERS).forEach(([key, w]) => {
   btn.onclick = () => { state.weather = key; saveRaceOptions(); document.querySelectorAll('#weather button').forEach(b => b.setAttribute('aria-pressed', b === btn)); };
   $('weather').append(btn);
 });
-$('itemsBox').checked = state.items;
+$('itemsBox').checked = state.mode !== 'tt' && state.items;
 $('itemsBox').onchange = () => { state.items = $('itemsBox').checked; saveRaceOptions(); };
 $('musicBox').checked = state.music;
 $('musicBox').onchange = () => {
@@ -4028,7 +4077,7 @@ function drawRoom() {
   $('netCpuRow').hidden = !net.host;
   $('hostNote').hidden = !inRoom || net.host;
   $('start').disabled = inRoom && !net.host;
-  const what = state.mode === 'gp' ? 'Start Grand Prix' : 'Start race';
+  const what = state.mode === 'gp' ? 'Start Grand Prix' : state.mode === 'tt' ? 'Start time trial' : 'Start race';
   $('start').textContent = !inRoom ? what : net.host ? `${what} (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
   if (!inRoom) return;
   $('netCodeShow').textContent = net.room.toUpperCase();
