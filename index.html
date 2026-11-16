@@ -265,7 +265,7 @@
   </div>
   <h2>Mode</h2>
   <div class="levels" id="modes"></div>
-  <p class="hostNote" id="gpNote" hidden>Race all four tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
+  <p class="hostNote" id="gpNote" hidden>Race all five tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
   <h2>Track</h2>
   <div class="bodies" id="tracks"></div>
   <h2>Laps</h2>
@@ -355,11 +355,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.8';
+const BUILD = '2026-11-16.9';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'New track: Coral Tunnel. Start on a sunny beach, then dive into a see-through tunnel under the sea with coral, fish, sharks and a whale. Grand Prix is now five tracks',
     'Phones: the speed and boost meter now sits at the bottom middle of the screen',
     'Time trial is now Sprint kart only, so times are fair',
     'Meadow Ring: more room before the rail on the inside of the bend before the last two corners',
@@ -1266,6 +1267,14 @@ const TRACKS = {
     // Just two ramps here; pads keep the spots they had when three ramps were placed automatically
     ramps: [[440, -4.5], [726, 4.5]], pads: [[232, 0], [369, 4], [697, -4], [45, 3]],
   },
+  sea: {
+    name: 'Coral Tunnel', icon: '🐠', blurb: 'Start on a sunny beach, then dive into a glass tunnel under the sea', theme: 'sea', pond: null, standRight: true, tube: true,
+    pts: [
+      [-20, 165, 3], [60, 165, 3], [125, 162, 3], [168, 140, 2.5], [182, 95, -5], [176, 40, -15], [150, 0, -21], [110, -30, -23],
+      [120, -80, -24], [90, -130, -24], [30, -150, -24], [-20, -120, -23], [-10, -60, -22], [-50, -20, -22], [-110, -40, -23], [-160, -80, -24],
+      [-186, -30, -22], [-178, 30, -15], [-172, 85, -6], [-160, 128, 1.5], [-128, 158, 3], [-75, 166, 3],
+    ],
+  },
 };
 const TRACK_IDS = Object.keys(TRACKS);
 const HW = 9, WALL = HW + 26, N = 1100;   // HW is half the road width, WALL is how far from the centre you can stray
@@ -1276,6 +1285,9 @@ const CPU_NAMES = ['Turbo', 'Nitro', 'Pixel', 'Rusty', 'Zippy', 'Comet', 'Blaze'
 const cx = new Float32Array(N), cy = new Float32Array(N), cz = new Float32Array(N);   // centre line
 const tx = new Float32Array(N), tz = new Float32Array(N);                              // direction of travel
 const kap = new Float32Array(N), vmax = new Float32Array(N);                           // signed curvature, safe CPU speed
+// Glass tunnel (tracks with tube: true): TUBE is 1 where the road runs inside it and 2 on the short funnel of wall
+// leading into each mouth. It's a half pipe TUBE_R wide either side of the centre line and TUBE_H tall.
+const TUBE = new Uint8Array(N), TUBE_R = 13, TUBE_H = 11, TUBE_FUNNEL = 16;
 const LIM_L = new Float32Array(N), LIM_R = new Float32Array(N);                        // how far out the barrier sits, left and right
 let DS = 1, TRACK = null, TRACK_ID = '', POND = null, RAMPS = [], PADS = [], BLOCK_ROWS = [];
 const nxOf = i => tz[i], nzOf = i => -tx[i];   // unit vector to the left of the track at sample i
@@ -1306,6 +1318,26 @@ function loadTrack(id) {
   }
   for (let i = 0; i < N; i++) { let s = 0; for (let j = -10; j <= 10; j++) s += raw[wrapI(i + j)]; kap[i] = s / 21; }
   buildBarriers();
+  // Where the road dips under the sea it runs in a glass tunnel: the walls close in to the glass, with a funnel
+  // of wall leading into each mouth
+  TUBE.fill(0);
+  if (TRACK.tube) {
+    for (let i = 0; i < N; i++) if (cy[i] < 1.2) TUBE[i] = 1;
+    const inside = TUBE_R - 1.2;
+    for (let i = 0; i < N; i++) {
+      if (TUBE[i] !== 1) continue;
+      LIM_L[i] = Math.min(LIM_L[i], inside); LIM_R[i] = Math.min(LIM_R[i], inside);
+      for (const dir of [-1, 1]) {
+        if (TUBE[wrapI(i + dir)] === 1) continue;   // i is the first or last sample of the tunnel
+        const far = wrapI(i + dir * TUBE_FUNNEL), l0 = LIM_L[far], r0 = LIM_R[far];
+        for (let k = 1; k < TUBE_FUNNEL; k++) {
+          const j = wrapI(i + dir * k), f = k / TUBE_FUNNEL;
+          TUBE[j] = 2;
+          LIM_L[j] = Math.min(LIM_L[j], inside + (l0 - inside) * f); LIM_R[j] = Math.min(LIM_R[j], inside + (r0 - inside) * f);
+        }
+      }
+    }
+  }
   // Corner speed from curvature, then a backwards pass so CPUs brake before the corner rather than in it
   for (let i = 0; i < N; i++) vmax[i] = Math.min(46, 1.02 / Math.max(.001, Math.abs(kap[i])));
   for (let n = 0; n < N * 2; n++) { const i = wrapI(-n), j = wrapI(i + 1); vmax[i] = Math.min(vmax[i], Math.sqrt(vmax[j] ** 2 + 2 * 15 * DS)); }
@@ -1548,6 +1580,12 @@ function nearestAny(x, z) {
 const GRID = 176, CELL = 3, GROUND = new Float32Array((GRID + 1) * (GRID + 1)), HALF = GRID * CELL / 2;
 function naturalHeight(x, z) {
   const th = TRACK.theme;
+  if (th === 'sea') {
+    // A long sandy island along one side, sloping down into a rippled seabed everywhere else
+    const d = Math.hypot(x / 205, (z - 176) / 76), beach = 3.4 + Math.sin(x * .05) * Math.cos(z * .06) * .5;
+    const bed = -25 + Math.sin(x * .03 + Math.sin(z * .021) * 2) * 2.2 + Math.sin(z * .06 + x * .013) * 1;
+    return bed + (beach - bed) * (1 - smooth(.82, 1.3, d));
+  }
   let h = th === 'city' ? 0 : th === 'desert'
     ? 2.6 + Math.sin(x * .028 + Math.sin(z * .019) * 2.2) * 2.6 + Math.sin(z * .055 + x * .01) * 1.1
     : th === 'snow'
@@ -1632,6 +1670,11 @@ const THEMES = {
     skyTop: 0x3478cc, skyHor: 0xf5d9b0, field: 0xd8ad70, fog: [0xf0d3a8, 190, 920], fogStorm: 0xc08a52, skyStorm: [1.05, .72, .45], cloud: [1, .96, .9], stormCloud: 0xa8784a, fogCut: [.92, .86],
     hemi: [0xfff0d8, 0xb8865a, .66], sun: [0xffe6c2, 1.12],
   },
+  sea: {
+    ground: [0xe6d19c, 0xf5e7bf], edge: 0xcbb284, shore: 0xe6d19c, outer: 0x2f7f93, kerb: ['#18b6c9', '#f6f6f2'], wall: ['#1798d6', '#f4f4f0'],
+    skyTop: 0x1f7fe0, skyHor: 0xc9ecf7, field: 0x2a9fc0, fog: [0xc9ecf7, 200, 950], fogStorm: 0x5f6f7c, skyStorm: [.36, .4, .47], cloud: [1, 1, 1],
+    hemi: [0xe2f4ff, 0xc9b98a, .66], sun: [0xfff3dc, 1.08],
+  },
 };
 
 let world = null;
@@ -1648,7 +1691,7 @@ function buildWorld() {
   const w = new THREE.Scene();
   const rnd = (() => { let s = 12345; return () => (s = s * 16807 % 2147483647) / 2147483647; })();
   const lam = o => new THREE.MeshLambertMaterial(o);
-  const TH = TRACK.theme, LOOK = THEMES[TH], SNOW = TH === 'snow', CITY = TH === 'city', MEADOW = TH === 'meadow', DESERT = TH === 'desert';
+  const TH = TRACK.theme, LOOK = THEMES[TH], SNOW = TH === 'snow', CITY = TH === 'city', MEADOW = TH === 'meadow', DESERT = TH === 'desert', SEA = TH === 'sea';
   const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
   const pondDist = (x, z) => POND ? Math.hypot(x - POND.x, z - POND.z) : 1e9;
   // The grandstand sits beside the road just before the start line, facing it: on the left unless the track says right
@@ -1663,7 +1706,7 @@ function buildWorld() {
   const size = GRID * CELL, geo = new THREE.PlaneGeometry(size, size, GRID, GRID);
   geo.rotateX(-Math.PI / 2);
   const p = geo.attributes.position, col = [], c = new THREE.Color();
-  const grassA = lin(LOOK.ground[0]), grassB = lin(LOOK.ground[1]), dirt = lin(LOOK.edge), sand = lin(LOOK.shore);
+  const grassA = lin(LOOK.ground[0]), grassB = lin(LOOK.ground[1]), dirt = lin(LOOK.edge), sand = lin(LOOK.shore), seabed = lin(0x9dc4b4);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i), near = nearestAny(x, z);
     // On the snow track the ground stays flat out to the barrier, so banks of snow don't hide it on the inside of bends
@@ -1678,13 +1721,18 @@ function buildWorld() {
         base += ((cy[o.i] - base) * w2 / (w1 + w2)) * smooth(HW + 1, HW + 8, near.d);
       }
     }
+    // Round the tunnel the sand stays level right out to the glass
+    if (TUBE[near.i] === 1) { rise0 = TUBE_R + 1.5; rise1 = TUBE_R + 30; }
     let h = base + (naturalHeight(x, z) - base) * smooth(rise0, rise1, near.d);
     if (near.d < HW + 1.5) h -= .28;
+    // The tunnel road climbs and dives steeply, so keep the sand well under it (the walkway covers the gap)
+    if (TUBE[near.i] && near.d < TUBE_R - .8) h -= .5 + Math.abs(cy[wrapI(near.i + 4)] - cy[wrapI(near.i - 4)]) / (8 * DS) * 5;
     GROUND[i] = h;
     p.setY(i, h);
     c.copy(grassA).lerp(grassB, .5 + .5 * Math.sin(x * .09 + Math.sin(z * .07) * 2) * Math.cos(z * .08));
     c.lerp(dirt, (1 - smooth(HW + .5, HW + 5, near.d)) * .75);
     if (POND) c.lerp(sand, 1 - smooth(POND.r - 3, POND.r + 7, pondDist(x, z)));
+    if (SEA) c.lerp(seabed, smooth(.5, 9, -h) * .8);   // paler, greener sand the deeper it goes
     c.multiplyScalar(CITY ? .94 + rnd() * .1 : .9 + rnd() * .18);
     col.push(c.r, c.g, c.b);
   }
@@ -1706,7 +1754,7 @@ function buildWorld() {
     for (let i = 0; i < 30000; i++) { const v = 170 + rnd() * 70 | 0; x.fillStyle = `rgba(${v},${v},${v + 3},.6)`; x.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 2, 1 + rnd() * 2); }
     x.strokeStyle = 'rgba(70,70,76,.7)'; x.lineWidth = 3;
     for (let k = 0; k <= 4; k++) { x.beginPath(); x.moveTo(k * W / 4, 0); x.lineTo(k * W / 4, H); x.stroke(); x.beginPath(); x.moveTo(0, k * H / 4); x.lineTo(W, k * H / 4); x.stroke(); }
-  }, 60, 60) : DESERT ? canvasTex(512, 512, (x, W, H) => {
+  }, 60, 60) : DESERT || SEA ? canvasTex(512, 512, (x, W, H) => {
     // Desert: wind ripples in the sand and scattered grains. The waves fit the width exactly so the texture tiles.
     x.fillStyle = '#f1e8d8'; x.fillRect(0, 0, W, H);
     for (let r = 0; r < 26; r++) {
@@ -1736,7 +1784,7 @@ function buildWorld() {
   terrain.receiveShadow = true;
   w.add(terrain);
   const outer = new THREE.Mesh(new THREE.CircleGeometry(1100, 48), lam({ color: lin(LOOK.outer) }));
-  outer.rotation.x = -Math.PI / 2; outer.position.y = -1.5;
+  outer.rotation.x = -Math.PI / 2; outer.position.y = SEA ? -30 : -1.5;
   w.add(outer);
   // Water: a normal map built from overlapping waves, scrolled each frame so the surface ripples
   const ripple = (() => {
@@ -1818,7 +1866,7 @@ function buildWorld() {
   const wallPos = [], wallUv = [], wallIdx = [];
   for (const bar of BARS) {
     const m = bar.length / 2;
-    let u = 0, lx = bar[0], lz = bar[1];
+    let u = 0, lx = bar[0], lz = bar[1], wasCut = false;
     for (let i = 0; i <= m; i++) {
       const j = i % m, x = bar[j * 2], z = bar[j * 2 + 1];
       u += Math.hypot(x - lx, z - lz) * .06; lx = x; lz = z;   // texture runs by distance so tight bits don't squash it
@@ -1828,7 +1876,23 @@ function buildWorld() {
       const y = Math.min(g0, g1, g2) - .3, top = Math.max(g0, g1, g2) + 1.5, b = wallPos.length / 3;
       wallPos.push(x, y, z, x, top, z);
       wallUv.push(u, 0, u, 1);
-      if (i) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
+      // No tyre wall round the glass tunnel (the glass is the wall) or its funnels (drawn below)
+      const cut = TRACK.tube && TUBE[nearestAny(x, z).i] > 0;
+      if (i && !cut && !wasCut) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
+      wasCut = cut;
+    }
+  }
+  // Funnels: a wall each side closing in from the tyre wall to the tunnel mouth
+  if (TRACK.tube) for (let i = 0; i < N; i++) {
+    if (TUBE[i] !== 1) continue;
+    for (const dir of [-1, 1]) {
+      if (TUBE[wrapI(i + dir)] === 1) continue;
+      for (const [lim, sd] of [[LIM_L, 1], [LIM_R, -1]]) for (let k = 0; k <= TUBE_FUNNEL; k++) {
+        const j = wrapI(i + dir * k), lat = sd * (lim[j] + (k ? .6 : 1.2)), x = cx[j] + nxOf(j) * lat, z = cz[j] + nzOf(j) * lat, g = groundAt(x, z), b = wallPos.length / 3;
+        wallPos.push(x, g - .4, z, x, Math.max(g, cy[j]) + 1.5, z);
+        wallUv.push(k * DS * .06, 0, k * DS * .06, 1);
+        if (k) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
+      }
     }
   }
   const wallGeo = new THREE.BufferGeometry();
@@ -1840,7 +1904,7 @@ function buildWorld() {
 
   // Corner arrows on the outside of tight bends
   const signs = [];
-  for (let i = 0; i < N; i += 3) if (Math.abs(kap[i]) > .016 && !signs.some(s => wrapI(i - s) < 22 || wrapI(s - i) < 22)) signs.push(i);
+  for (let i = 0; i < N; i += 3) if (!TUBE[i] && Math.abs(kap[i]) > .016 && !signs.some(s => wrapI(i - s) < 22 || wrapI(s - i) < 22)) signs.push(i);
   const signMat = lam({ side: THREE.DoubleSide, map: canvasTex(128, 64, (x, W, H) => {
     x.fillStyle = '#16171c'; x.fillRect(0, 0, W, H);
     x.strokeStyle = '#ffd21f'; x.lineWidth = 12;
@@ -1921,7 +1985,7 @@ function buildWorld() {
   // Trees past the wall
   const spots = [];
   // Frosty Peaks is a proper forest, so it gets a lot more (a bit fewer on phones)
-  const TREES = CITY ? 0 : DESERT ? 420 : SNOW ? (TOUCH ? 1000 : 1400) : 620;
+  const TREES = CITY || SEA ? 0 : DESERT ? 420 : SNOW ? (TOUCH ? 1000 : 1400) : 620;
   for (let tries = 0; tries < 20000 && spots.length < TREES; tries++) {
     const x = (rnd() - .5) * size * .98, z = (rnd() - .5) * size * .98, near = nearestAny(x, z);
     if (near.d < WALL + 3 || pondDist(x, z) < (POND?.r ?? 0) + 8 || nearStand(x, z) || byPos(x, z, 8) || inClear(x, z)) continue;
@@ -1962,7 +2026,7 @@ function buildWorld() {
   // Bushes hugging the outside of the tyre wall
   const bushSpots = [];
   for (let i = 0; i < N; i += 4) for (const s of [-1, 1]) {
-    if (CITY || rnd() < (DESERT ? .8 : .45)) continue;
+    if (CITY || SEA || rnd() < (DESERT ? .8 : .45)) continue;
     const off = WALL + 2.2 + rnd() * 3, x = cx[i] + nxOf(i) * s * off, z = cz[i] + nzOf(i) * s * off;
     if (nearestAny(x, z).d < WALL + 1.5 || pondDist(x, z) < (POND?.r ?? 0) + 4 || nearStand(x, z) || byPos(x, z, 4) || inClear(x, z)) continue;
     bushSpots.push([x, z]);
@@ -2029,7 +2093,7 @@ function buildWorld() {
     const band = new THREE.Mesh(new THREE.CylinderGeometry(wide * .73, wide * .76, h * .12, seg), lam({ color: 0xe0a070, flatShading: true }));
     band.position.set(m.position.x, h * .8 - 2, m.position.z); band.rotation.y = m.rotation.y; w.add(band);
   }
-  for (let i = 0; i < (CITY || DESERT ? 0 : SNOW ? 32 : 26); i++) {
+  for (let i = 0; i < (CITY || DESERT || SEA ? 0 : SNOW ? 32 : 26); i++) {
     const a = i / (SNOW ? 32 : 26) * Math.PI * 2 + rnd() * .1, r = (SNOW ? 560 : 620) + rnd() * 120, h = (SNOW ? 150 : 90) + rnd() * (SNOW ? 160 : 110), wide = 90 + rnd() * 90;
     const m = new THREE.Mesh(new THREE.ConeGeometry(wide, h, 5 + (rnd() * 3 | 0)), rocks);
     m.position.set(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r); w.add(m);
@@ -2183,13 +2247,14 @@ function buildWorld() {
   if (SNOW) buildSnowmen(w, snowmen);
   if (CITY) buildCity(w, rnd, nearStand, lam, size);
   if (DESERT) buildDesert(w, rnd, nearStand, lam, spots);
+  const sea = SEA ? buildSea(w, rnd, nearStand, lam, ripple, dot) : null;
 
   buildRamps(w);
   const look = {
     sky: new THREE.Color(1, 1, 1), skyStorm: new THREE.Color(...LOOK.skyStorm), cloud: new THREE.Color(...LOOK.cloud),
     fog: new THREE.Color(LOOK.fog[0]), fogStorm: new THREE.Color(LOOK.fogStorm), fogNear: LOOK.fog[1], fogFar: LOOK.fog[2], fogCut: LOOK.fogCut || [.72, .62], sun: LOOK.sun[1], hemi: LOOK.hemi[2],
   };
-  world = { track: TRACK_ID, look, flakes, scene: w, sun, sunGlow, ripple, padTex, skyMat, cloudMat, stormMat, storm, hemi, road, rain, dropPos, dropGeo, DROPS, wet: 0, bolt: 0, nextBolt: 6, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
+  world = { track: TRACK_ID, look, flakes, sea, scene: w, sun, sunGlow, ripple, padTex, skyMat, cloudMat, stormMat, storm, hemi, road, rain, dropPos, dropGeo, DROPS, wet: 0, bolt: 0, nextBolt: 6, partPos, partCol, partGeo, parts, next: 0, blocks: buildBlocks(w), kit: buildFxKit() };
 }
 
 // A few snowmen watching from beyond the wall, spread out so they don't bunch up
@@ -2295,6 +2360,216 @@ function buildDesert(w, rnd, nearStand, lam, spots) {
     w.add(arch);
     break;
   }
+}
+
+// Coral Tunnel: the sea itself, the glass tunnel, palms and umbrellas on the beach, and coral, kelp, fish and bubbles below
+function buildSea(w, rnd, nearStand, lam, ripple, dot) {
+  const o = new THREE.Object3D(), tint = new THREE.Color(), few = TOUCH ? .55 : 1;
+  const make = (geo, mat, max) => { const m = new THREE.InstancedMesh(geo, mat, Math.max(1, max)); m.setColorAt(0, new THREE.Color(1, 1, 1)); m.count = 0; m.frustumCulled = false; w.add(m); return m; };
+  const put = (m, x, y, z, rx, ry, rz, sx, sy, sz, col) => {
+    if (m.count >= m.instanceMatrix.count) return;
+    o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.scale.set(sx, sy, sz); o.updateMatrix();
+    m.setMatrixAt(m.count, o.matrix); m.setColorAt(m.count++, col);
+  };
+  const white = () => lam({ color: 0xffffff, flatShading: true });
+  // Runs of samples in a row that pass a test, as [first, last] pairs (the start line is never in one)
+  const runs = test => { const out = []; for (let i = 0; i < N; i++) if (test(i)) { let j = i; while (j + 1 < N && test(j + 1)) j++; out.push([i, j]); i = j; } return out; };
+
+  // The sea: one big flat sheet with a slot cut out where each tunnel mouth dips through the surface, so there's
+  // no water inside the glass
+  const S = 1300, shape = new THREE.Shape();
+  shape.moveTo(-S, -S); shape.lineTo(S, -S); shape.lineTo(S, S); shape.lineTo(-S, S); shape.closePath();
+  const halfAt = i => cy[i] >= 0 ? TUBE_R : TUBE_R * Math.sqrt(Math.max(0, 1 - (cy[i] / TUBE_H) ** 2));   // half the tunnel's width at the waterline
+  for (const [a, b] of runs(i => TUBE[i] === 1 && cy[i] < .4 && cy[i] > -TUBE_H)) {
+    const L = [], R = [];
+    for (let i = a; i <= b; i += (i < b && i + 2 > b ? 1 : 2)) {
+      const h = Math.max(.15, halfAt(i));
+      L.push([cx[i] + nxOf(i) * h, cz[i] + nzOf(i) * h]); R.push([cx[i] - nxOf(i) * h, cz[i] - nzOf(i) * h]);
+    }
+    const hole = new THREE.Path(), ring = [...L, ...R.reverse()];
+    ring.forEach(([x, z], k) => k ? hole.lineTo(x, z) : hole.moveTo(x, z));
+    hole.closePath();
+    shape.holes.push(hole);
+  }
+  const seaGeo = new THREE.ShapeGeometry(shape);
+  seaGeo.rotateX(Math.PI / 2);   // the shape's y becomes world z
+  const sp = seaGeo.attributes.position, suv = seaGeo.attributes.uv;
+  for (let i = 0; i < sp.count; i++) suv.setXY(i, sp.getX(i) / 70, sp.getZ(i) / 70);
+  const water = new THREE.Mesh(seaGeo, new THREE.MeshStandardMaterial({
+    color: new THREE.Color(0x1a9ccf).convertSRGBToLinear(), transparent: true, opacity: .88, roughness: .22, metalness: .05, normalMap: ripple, normalScale: new THREE.Vector2(.16, .16), envMapIntensity: .55, side: THREE.DoubleSide,
+  }));
+  water.renderOrder = 1;
+  w.add(water);
+
+  // The tunnel: a half pipe of glass over the road with a steel rib every few metres, a rail along each foot,
+  // a strip of light along the top and a grated walkway either side of the road
+  const SEG = 14, glassPos = [], glassIdx = [], ribPos = [], ribIdx = [], lightPos = [], lightIdx = [];
+  const arc = (i, s, r, hgt) => { const a = s / SEG * Math.PI, lat = Math.cos(a) * r; return [cx[i] + nxOf(i) * lat, cy[i] + Math.sin(a) * hgt, cz[i] + nzOf(i) * lat]; };
+  const strip = (pos, idx, i, i2, r0, r1) => {   // an arch-shaped band between two samples
+    const b = pos.length / 3;
+    for (let s = 0; s <= SEG; s++) { pos.push(...arc(i, s, r0, TUBE_H * r0 / TUBE_R), ...arc(i2, s, r1, TUBE_H * r1 / TUBE_R)); }
+    for (let s = 0; s < SEG; s++) { const a = b + s * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  };
+  const tubeRuns = runs(i => TUBE[i] === 1);
+  for (const [a, b] of tubeRuns) {
+    const base = glassPos.length / 3;
+    for (let i = a; i <= b; i++) for (let s = 0; s <= SEG; s++) glassPos.push(...arc(i, s, TUBE_R, TUBE_H));
+    for (let i = 0; i < b - a; i++) for (let s = 0; s < SEG; s++) { const p = base + i * (SEG + 1) + s; glassIdx.push(p, p + SEG + 1, p + 1, p + 1, p + SEG + 1, p + SEG + 2); }
+    for (let i = a; i < b; i += 8) strip(ribPos, ribIdx, i, Math.min(b, i + 1), TUBE_R + .06, TUBE_R + .06);
+    // A chunkier ring at each mouth
+    strip(ribPos, ribIdx, a, a + 2, TUBE_R + .3, TUBE_R + .3); strip(ribPos, ribIdx, b - 2, b, TUBE_R + .3, TUBE_R + .3);
+    // Light strip along the crown
+    const lb = lightPos.length / 3;
+    for (let i = a; i <= b; i++) for (const lat of [-.5, .5]) lightPos.push(cx[i] + nxOf(i) * lat, cy[i] + TUBE_H - .12, cz[i] + nzOf(i) * lat);
+    for (let i = 0; i < b - a; i++) { const p = lb + i * 2; lightIdx.push(p, p + 1, p + 2, p + 1, p + 3, p + 2); }
+  }
+  const geoOf = (pos, idx) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals(); return g; };
+  const glass = new THREE.Mesh(geoOf(glassPos, glassIdx), new THREE.MeshStandardMaterial({
+    color: 0xd4f3ff, transparent: true, opacity: .13, roughness: .04, metalness: 0, envMapIntensity: 1.6, side: THREE.DoubleSide, depthWrite: false,
+  }));
+  glass.renderOrder = 2;
+  w.add(glass);
+  w.add(new THREE.Mesh(geoOf(ribPos, ribIdx), new THREE.MeshStandardMaterial({ color: 0xdfe6ee, metalness: .5, roughness: .4, side: THREE.DoubleSide })));
+  w.add(new THREE.Mesh(geoOf(lightPos, lightIdx), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.5, 2.2, 2.4), side: THREE.DoubleSide, toneMapped: false, fog: false })));
+  const grate = lam({ map: canvasTex(64, 64, (x, W, H) => {
+    x.fillStyle = '#7f8a96'; x.fillRect(0, 0, W, H);
+    x.strokeStyle = '#59636e'; x.lineWidth = 3;
+    for (let k = -W; k < W * 2; k += 16) { x.beginPath(); x.moveTo(k, 0); x.lineTo(k + H, H); x.stroke(); x.beginPath(); x.moveTo(k, H); x.lineTo(k + H, 0); x.stroke(); }
+  }) }), rail = lam({ color: 0x1b6f9c, side: THREE.DoubleSide });
+  for (const [a, b] of tubeRuns) for (const sd of [-1, 1]) {
+    ribbon(a, b, sd * (sd > 0 ? TUBE_R - .2 : HW + .4), sd * (sd > 0 ? HW + .4 : TUBE_R - .2), .03, grate, Math.round((b - a) * DS / 3), w);
+    // The rail: a low wall at the foot of the glass
+    const pos = [], idx = [];
+    for (let i = a; i <= b; i++) { const lat = sd * (TUBE_R - .25), x = cx[i] + nxOf(i) * lat, z = cz[i] + nzOf(i) * lat; pos.push(x, cy[i] - 2, z, x, cy[i] + .8, z); }
+    for (let i = 0; i < b - a; i++) { const p = i * 2; idx.push(p, p + 1, p + 2, p + 1, p + 3, p + 2); }
+    w.add(new THREE.Mesh(geoOf(pos, idx), rail));
+  }
+
+  // On the beach: palms and sun umbrellas
+  const PALMS = Math.round(46 * few), seg = make(new THREE.CylinderGeometry(.32, .42, 1.6, 7).translate(0, .8, 0), lam({ color: 0x8a6a45 }), PALMS * 6);
+  const frond = make(new THREE.ConeGeometry(.55, 5, 4).translate(0, 2.5, 0).scale(1, 1, .25), white(), PALMS * 8), nut = make(new THREE.SphereGeometry(.28, 6, 5), lam({ color: 0x5a3b1e }), PALMS * 3);
+  const parent = new THREE.Matrix4(), local = new THREE.Matrix4();
+  const putIn = (m, x, y, z, rx, ry, rz, sx, sy, sz, col) => {
+    o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.scale.set(sx, sy, sz); o.updateMatrix();
+    local.multiplyMatrices(parent, o.matrix); m.setMatrixAt(m.count, local); m.setColorAt(m.count++, col);
+  };
+  const beachSpot = (minY, clear) => {
+    for (let tries = 0; tries < 400; tries++) {
+      const x = (rnd() - .5) * 420, z = 176 + (rnd() - .5) * 160, y = groundAt(x, z);
+      if (y > minY && nearestAny(x, z).d > clear && !nearStand(x, z)) return [x, y, z];
+    }
+    return null;
+  };
+  for (let n = 0; n < PALMS; n++) {
+    const at = beachSpot(1.6, WALL + 3);
+    if (!at) break;
+    const lean = .1 + rnd() * .14, s = .9 + rnd() * .5;
+    parent.compose(new THREE.Vector3(at[0], at[1] - .2, at[2]), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.3), new THREE.Vector3(s, s, s));
+    let px = 0, py = 0;
+    for (let k = 0; k < 6; k++) { const ang = lean * (1 + k * .35); putIn(seg, px, py, 0, 0, 0, ang, 1 - k * .06, 1, 1 - k * .06, tint.setHSL(.08, .35, .32 + (k % 2) * .05)); px -= Math.sin(ang) * 1.6; py += Math.cos(ang) * 1.6; }
+    for (let f = 0; f < 8; f++) putIn(frond, px, py, 0, 0, f / 8 * Math.PI * 2 + rnd() * .3, 1.25 + rnd() * .35, 1, .9 + rnd() * .3, 1, tint.setHSL(.27 + rnd() * .06, .55, .28 + rnd() * .08));
+    for (let k = 0; k < 3; k++) putIn(nut, px + Math.cos(k * 2.1) * .35, py - .3, Math.sin(k * 2.1) * .35, 0, 0, 0, 1, 1, 1, tint.set(0xffffff));
+  }
+  for (const m of [seg, frond, nut]) m.castShadow = true;
+  const pole = make(new THREE.CylinderGeometry(.07, .07, 2.6, 6).translate(0, 1.3, 0), lam({ color: 0xf2f2f2 }), 16), shade = make(new THREE.ConeGeometry(2.1, .9, 10).translate(0, 2.9, 0), white(), 16);
+  const towel = make(new THREE.BoxGeometry(1.1, .06, 2.2), lam({ color: 0xffffff }), 16), brolly = [0xff4d5a, 0xffc93c, 0x29b6f6, 0xff8a3d, 0x66d17a, 0xff6fae];
+  for (let n = 0; n < 16; n++) {
+    const at = beachSpot(1.2, WALL + 5);
+    if (!at) break;
+    const tilt = (rnd() - .5) * .25, c = brolly[n % brolly.length];
+    put(pole, at[0], at[1] - .1, at[2], tilt, 0, tilt, 1, 1, 1, tint.set(0xffffff)); put(shade, at[0], at[1] - .1, at[2], tilt, rnd() * 6, tilt, 1, 1, 1, tint.set(c));
+    put(towel, at[0] + 1.4, at[1] + .05, at[2] + .6, 0, rnd() * 6, 0, 1, 1, 1, tint.set(brolly[(n + 2) % brolly.length]));
+  }
+  shade.castShadow = true;
+  // A few far-off islands on the horizon
+  for (let n = 0; n < 7; n++) {
+    const a = n / 7 * Math.PI * 2 + rnd() * .5, r = 520 + rnd() * 300, wide = 40 + rnd() * 60, x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (z > 300 && Math.abs(x) < 400) continue;
+    const isle = new THREE.Mesh(new THREE.ConeGeometry(wide, 14, 9), lam({ color: 0xe6d19c, flatShading: true })); isle.position.set(x, -3, z); w.add(isle);
+    const green = new THREE.Mesh(new THREE.IcosahedronGeometry(wide * .45, 1), lam({ color: 0x2f8a3a, flatShading: true })); green.position.set(x, 4, z); green.scale.y = .45; w.add(green);
+  }
+
+  // On the seabed beside the tunnel: coral, kelp and rocks
+  const deep = []; for (let i = 0; i < N; i++) if (TUBE[i] === 1 && cy[i] < -3) deep.push(i);
+  const bedSpot = reach => {
+    for (let tries = 0; tries < 30; tries++) {
+      const i = deep[rnd() * deep.length | 0], lat = (rnd() < .5 ? -1 : 1) * (TUBE_R + 1.6 + Math.pow(rnd(), 1.6) * reach), x = cx[i] + nxOf(i) * lat + (rnd() - .5) * 3, z = cz[i] + nzOf(i) * lat + (rnd() - .5) * 3;
+      if (nearestAny(x, z).d < TUBE_R + 1.6) continue;
+      const y = groundAt(x, z);
+      if (y < -2.5) return [x, y, z];
+    }
+    return null;
+  };
+  const coralCols = [[.95, .7, .6], [.04, .85, .58], [.08, .9, .6], [.78, .5, .62], [.14, .85, .6], [.5, .6, .55], [.0, .75, .55]];
+  const coralTint = () => { const c = coralCols[rnd() * coralCols.length | 0]; return tint.setHSL(c[0] + (rnd() - .5) * .03, c[1], c[2] + (rnd() - .5) * .1); };
+  const blob = make(new THREE.IcosahedronGeometry(1, 1), white(), Math.round(420 * few));
+  for (let n = 0; n < blob.instanceMatrix.count; n++) { const at = bedSpot(34); if (!at) continue; const s = .6 + rnd() * 1.5; put(blob, at[0], at[1] + s * .3, at[2], rnd() * 3, rnd() * 3, 0, s * (1 + rnd() * .5), s * (.55 + rnd() * .4), s * (1 + rnd() * .5), coralTint()); }
+  const twig = make(new THREE.ConeGeometry(.3, 2.4, 5).translate(0, 1.2, 0), white(), Math.round(260 * few) * 5);
+  for (let n = 0; n < twig.instanceMatrix.count / 5; n++) {
+    const at = bedSpot(30); if (!at) continue;
+    const s = .7 + rnd() * 1.1, c = coralTint().clone();
+    for (let k = 0; k < 5; k++) { const a = k / 5 * 6.28 + rnd(), out = k ? .35 + rnd() * .4 : 0; put(twig, at[0] + Math.cos(a) * out * .5, at[1] - .2, at[2] + Math.sin(a) * out * .5, Math.sin(a) * out, 0, -Math.cos(a) * out, s, s * (.7 + rnd() * .7), s, c); }
+  }
+  const kelp = make(new THREE.ConeGeometry(.45, 1, 4).translate(0, .5, 0), white(), Math.round(300 * few) * 3);
+  for (let n = 0; n < kelp.instanceMatrix.count / 3; n++) {
+    const at = bedSpot(38); if (!at) continue;
+    for (let k = 0; k < 3; k++) { const h = Math.min(4 + rnd() * 9, -at[1] - 1.5); put(kelp, at[0] + (rnd() - .5) * 1.6, at[1] - .2, at[2] + (rnd() - .5) * 1.6, (rnd() - .5) * .25, rnd() * 6, (rnd() - .5) * .25, 1, h, .35, tint.setHSL(.3 + rnd() * .1, .6, .22 + rnd() * .12)); }
+  }
+  const stone = make(new THREE.DodecahedronGeometry(1, 0), white(), Math.round(120 * few));
+  for (let n = 0; n < stone.instanceMatrix.count; n++) { const at = bedSpot(40); if (!at) continue; const s = .8 + rnd() * 2.4; put(stone, at[0], at[1] + s * .15, at[2], rnd() * 3, rnd() * 3, rnd() * 3, s * 1.3, s * .8, s, tint.setHSL(.55, .08, .38 + rnd() * .15)); }
+
+  // Fish: a body and a tail in one shape, nose along +x. They swim in schools round a point; the big ones circle wide.
+  const fishGeo = (() => {
+    const body = new THREE.SphereGeometry(1, 9, 6).scale(1, .55, .32).toNonIndexed(), tail = new THREE.ConeGeometry(.5, .8, 4).rotateZ(-Math.PI / 2).scale(1, 1, .25).translate(-1.25, 0, 0).toNonIndexed();
+    const fin = new THREE.ConeGeometry(.25, .5, 4).scale(1, 1, .25).translate(-.1, .6, 0).toNonIndexed();
+    const g = new THREE.BufferGeometry(), all = [body, tail, fin];
+    for (const name of ['position', 'normal']) g.setAttribute(name, new THREE.Float32BufferAttribute(all.flatMap(p => [...p.attributes[name].array]), 3));
+    return g;
+  })();
+  const swimmers = [], SCHOOLS = Math.round(22 * few), PER = 9;
+  const fish = make(fishGeo, lam({ color: 0xffffff }), SCHOOLS * PER + 6);
+  const fishCols = [[.08, .95, .55], [.13, .95, .55], [.55, .85, .55], [.0, .8, .55], [.75, .6, .65], [.45, .7, .5]];
+  const addSwimmer = (x, y, z, r, speed, size, col, bob, ph) => { swimmers.push({ x, y, z, r, speed, size, bob, ph }); fish.setColorAt(fish.count++, col); };
+  const far = deep.filter(i => cy[i] < -17);
+  for (let n = 0; n < SCHOOLS && far.length; n++) {
+    const i = far[rnd() * far.length | 0], over = n % 3 === 0, r = 4 + rnd() * 7;
+    const lat = over ? 0 : (rnd() < .5 ? -1 : 1) * (TUBE_R + r + 3 + rnd() * 16), x = cx[i] + nxOf(i) * lat, z = cz[i] + nzOf(i) * lat;
+    if (!over && nearestAny(x, z).d < TUBE_R + r + 2) continue;
+    const y = over ? cy[i] + TUBE_H + 2.5 + rnd() * 3 : cy[i] + 3 + rnd() * 9, sp = (.35 + rnd() * .4) * (rnd() < .5 ? -1 : 1), c = fishCols[rnd() * fishCols.length | 0], sz = .5 + rnd() * .5;
+    for (let k = 0; k < PER; k++) addSwimmer(x, y + (rnd() - .5) * 2.4, z, r + (rnd() - .5) * 2.5, sp, sz * (.8 + rnd() * .4), tint.setHSL(c[0], c[1], c[2] + (rnd() - .5) * .1), .5, k / PER * 6.28 * (.25 + rnd() * .1) + rnd() * .3);
+  }
+  // Sharks over the tunnel, and one whale cruising high above it all
+  for (let n = 0; n < 3 && far.length; n++) { const i = far[(n * 311 + 40) % far.length]; addSwimmer(cx[i], cy[i] + TUBE_H + 5 + n, cz[i], 26 + n * 9, (n % 2 ? -1 : 1) * .16, 4.2, tint.setHSL(.58, .12, .5), .8, n * 2); }
+  addSwimmer(10, -6, -90, 62, .05, 8, tint.setHSL(.6, .35, .32), .3, 1);
+  fish.instanceColor.needsUpdate = true;
+
+  // Bubbles rising from the seabed near the tunnel
+  const BUB = Math.round(260 * few), bub = new Float32Array(BUB * 3), bubSpeed = new Float32Array(BUB), bubBase = new Float32Array(BUB), bubGeo = new THREE.BufferGeometry();
+  for (let n = 0; n < BUB; n++) {
+    const at = (n % 8 ? null : bedSpot(10)) || [bub[(n - 1) * 3] + (rnd() - .5) * .8 || 0, bubBase[n - 1] || -20, bub[(n - 1) * 3 + 2] + (rnd() - .5) * .8 || 0];
+    bub[n * 3] = at[0]; bubBase[n] = at[1]; bub[n * 3 + 1] = at[1] + rnd() * -at[1]; bub[n * 3 + 2] = at[2]; bubSpeed[n] = 1.6 + rnd() * 2.2;
+  }
+  bubGeo.setAttribute('position', new THREE.BufferAttribute(bub, 3));
+  const bubbles = new THREE.Points(bubGeo, new THREE.PointsMaterial({ size: .38, map: dot, color: 0xe8fbff, transparent: true, opacity: .7, depthWrite: false }));
+  bubbles.frustumCulled = false;
+  w.add(bubbles);
+
+  let t = 0;
+  function update(dt) {
+    t += dt;
+    swimmers.forEach((f, n) => {
+      const a = t * f.speed + f.ph;
+      o.position.set(f.x + Math.cos(a) * f.r, f.y + Math.sin(t * 1.3 + f.ph * 7) * f.bob, f.z + Math.sin(a) * f.r);
+      o.rotation.set(0, -a - Math.PI / 2 + (f.speed < 0 ? Math.PI : 0) + Math.sin(t * 6 + n) * .12, 0);
+      o.scale.setScalar(f.size); o.updateMatrix();
+      fish.setMatrixAt(n, o.matrix);
+    });
+    fish.instanceMatrix.needsUpdate = true;
+    for (let n = 0; n < BUB; n++) { const k = n * 3 + 1; bub[k] += bubSpeed[n] * dt; if (bub[k] > -.4) bub[k] = bubBase[n]; }
+    bubGeo.attributes.position.needsUpdate = true;
+  }
+  update(0);
+  return { water, update, fog: new THREE.Color(0x117aa6), fogDeep: new THREE.Color(0x0a3a55), tint: new THREE.Color() };
 }
 
 // Night city: blocks of buildings with lit windows, a far skyline, and street lights that throw pools of light on the road
@@ -3206,7 +3481,7 @@ function drawResults() {
 // ---------- Grand Prix ----------
 // All three tracks in a row. Points for every finishing place; the most points after the last race wins the cup.
 // Every new cup races the three tracks in a random order (in a room the host shuffles and tells everyone), so nobody picks.
-const GP_TRACKS = ['meadow', 'snow', 'city', 'desert'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
+const GP_TRACKS = ['meadow', 'snow', 'city', 'desert', 'sea'], GP_POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
 let gp = null;
 function newGp() {
   const order = [...GP_TRACKS];
@@ -3469,6 +3744,15 @@ function stepWeather(dt) {
   W.storm.position.set(raceCam.position.x, 0, raceCam.position.z);
   W.scene.fog.color.copy(L.fog).lerp(L.fogStorm, dark);
   W.scene.fog.near = L.fogNear * (1 - L.fogCut[0] * dark); W.scene.fog.far = L.fogFar * (1 - L.fogCut[1] * dark);
+  // Under the sea everything fades into blue, and the surface overhead turns nearly solid
+  // It comes on gradually over the first few metres down, so driving into the tunnel doesn't flick the colours
+  const depth = W.sea ? smooth(.2, 3.2, -raceCam.position.y) : 0, under = depth > .5;
+  if (W.sea) {
+    const blue = W.sea.tint.copy(W.sea.fog).lerp(W.sea.fogDeep, dark * .7), fog = W.scene.fog;
+    W.sea.water.material.opacity = .88 + .05 * depth;
+    W.skyMat.color.lerp(blue, depth);   // any sky seen past the edge of the sea
+    fog.color.lerp(blue, depth); fog.near += (2 - fog.near) * depth; fog.far += (175 - 45 * dark - fog.far) * depth;
+  }
   W.sun.intensity = L.sun * (1 - (.57 + .29 * storm) * dark) + W.bolt * 1.4;
   W.hemi.intensity = L.hemi * (1 - (.24 + .35 * storm) * dark) + W.bolt * 1.1;
   W.sunGlow.material.opacity = 1 - dark;
@@ -3511,10 +3795,10 @@ function stepWeather(dt) {
     f.g.attributes.position.needsUpdate = true;
     return;
   }
-  sound.rain(wet);
+  sound.rain(under ? wet * .25 : wet);
   // Rain falls straight-ish, a touch slanted in a storm, and wraps around the camera
   const n = Math.round(W.DROPS * Math.min(1, wet / .6) * (wet > .6 ? 1 : .55));
-  W.rain.visible = n > 0;
+  W.rain.visible = n > 0 && !under;
   if (!n) return;
   W.dropGeo.setDrawRange(0, n * 2);
   const p = W.dropPos, c = raceCam.position, fall = (38 + wet * 22) * dt, side = wet * 6 * dt;
@@ -3562,6 +3846,7 @@ function raceFrame(dt) {
   world.sunGlow.position.set(55, 120, 40).setLength(800).add(raceCam.position);
   stepWeather(r.paused ? 0 : dt);
   world.ripple.offset.x += dt * .02; world.ripple.offset.y += dt * .013;
+  if (world.sea && !r.paused) world.sea.update(dt);
   renderer.render(world.scene, raceCam);
 }
 
@@ -3991,7 +4276,7 @@ function drawTrackPicker() {
   $('ttKartNote').hidden = !tt;
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !locked && b.dataset.id === state.track); b.disabled = locked; b.style.opacity = locked ? .55 : ''; });
   $('gpNote').hidden = !(cup || tt) || guest;
-  if (cup) $('gpNote').textContent = `Race all four tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
+  if (cup) $('gpNote').textContent = `Race all five tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
   else if (tt) {
     const rec = ttRecords()[state.track];
     $('gpNote').textContent = `Just you and the clock: 3 laps on the Sprint kart, no CPUs, no lucky blocks. Your best lap is your score. ` +
