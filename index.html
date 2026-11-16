@@ -172,6 +172,44 @@
   body.touch #map { inset: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) auto auto; width: 106px; height: 106px; }
   body.touch #dash { left: calc(16px + env(safe-area-inset-left)); right: auto; bottom: calc(112px + env(safe-area-inset-bottom)); width: 120px; text-align: left; font-size: 13px; }
   body.touch #dash b { font-size: 30px; }
+  /* Steering styles, picked under Phone controls in the menu */
+  .touchOnly { display: none; }
+  body.touch .touchOnly { display: block; }
+  body.touch div.touchOnly.levels { display: grid; }
+  .wideBtn { width: 100%; margin-top: 8px; padding: 9px; font-size: 14px; font-weight: 700; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
+  #ctlMsg { margin: 6px 0 0; font-size: 12px; color: var(--dim); }
+  #ctlMsg:empty { display: none; }
+  body.touch #steerPad[data-style=stick], body.touch #steerPad[data-style=float] { width: 150px; height: 150px; border-radius: 50%; }
+  #steerPad[data-style=stick] #knob, #steerPad[data-style=float] #knob { top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; }
+  #steerPad[data-style=stick] span, #steerPad[data-style=float] span { display: none; }
+  body.touch #steerPad[data-style=float] { pointer-events: none; opacity: .5; }
+  body.touch #steerPad[data-style=float].live { opacity: 1; }
+  body.touch #steerPad[data-style=arrows] { width: 196px; height: 88px; background: none; border: 0; }
+  #steerPad[data-style=arrows] #knob { display: none; }
+  #steerPad[data-style=arrows] span { display: flex; align-items: center; justify-content: center; top: 0; width: 88px; height: 88px; transform: none; font-size: 30px; opacity: 1; background: rgba(18, 20, 28, .5); border: 2px solid rgba(255, 255, 255, .4); border-radius: 50%; box-sizing: border-box; }
+  #steerPad[data-style=arrows] span:first-child { left: 0; }
+  #steerPad[data-style=arrows] span:last-child { right: 0; }
+  #steerPad[data-style=arrows] span.held { color: #14161d; background: var(--hot); border-color: var(--hot); }
+  body.touch #steerPad[data-style=tilt] { display: none; }
+  body.touch[data-steer=stick] #dash, body.touch[data-steer=float] #dash { bottom: calc(172px + env(safe-area-inset-bottom)); }
+  #floatZone { display: none; position: absolute; left: 0; top: calc(64px + env(safe-area-inset-top)); bottom: 0; width: 50%; pointer-events: auto; touch-action: none; }
+  body.touch[data-steer=float] #floatZone { display: block; }
+  /* Move & resize controls: the pads show over the garage and can be dragged anywhere */
+  body.editPads #panel, body.editPads h1 { display: none; }
+  body.editPads #hud { display: block; pointer-events: auto; background: rgba(10, 12, 18, .35); }
+  body.editPads #hud > :not(#pads), body.editPads #floatZone { display: none; }
+  body.editPads #pads [data-pad] { pointer-events: auto; opacity: 1; outline: 2px dashed rgba(255, 255, 255, .55); outline-offset: 3px; }
+  body.editPads #pads [data-pad].sel { outline: 3px solid var(--hot); }
+  body.editPads #steerPad[data-style=tilt] { display: block; width: 150px; height: 60px; border-radius: 12px; }
+  body.editPads #steerPad[data-style=tilt]::after { content: 'Tilt (no button)'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  body.editPads #steerPad[data-style=tilt] > * { display: none; }
+  #padEdit { display: none; position: fixed; left: 50%; top: 50%; z-index: 15; flex-direction: column; gap: 6px; width: min(300px, calc(100vw - 32px)); padding: 12px 14px; transform: translate(-50%, -50%); text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(10px); }
+  body.editPads #padEdit { display: flex; }
+  #padEdit b { font-size: 14px; }
+  #padEdit small { color: var(--dim); font-size: 12px; }
+  #padEdit label { margin: 2px 0; }
+  #padEdit .netRow button { flex: 1; padding: 9px; font-weight: 800; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); border-radius: 8px; }
+  #padEdit #padDone { color: #14161d; background: var(--hot); border-color: var(--hot); }
   @media (max-height: 500px) {
     h1 { top: 10px; left: 14px; font-size: 18px; }
     #panel { top: 8px; right: 8px; bottom: 8px; }
@@ -238,6 +276,10 @@
   <div class="swatches" id="swatches"></div>
   <h2>Number</h2>
   <label>Race number <input type="number" id="number" min="0" max="99" value="7"></label>
+  <h2 class="touchOnly">Phone controls</h2>
+  <div class="levels touchOnly" id="steerStyles"></div>
+  <p class="touchOnly" id="ctlMsg"></p>
+  <button class="wideBtn touchOnly" id="editPadsBtn">&#9995; Move &amp; resize controls</button>
   <h2>View</h2>
   <div class="views" id="views"></div>
   <h2 class="devOnly">Test</h2>
@@ -262,13 +304,14 @@
   <canvas id="map" width="190" height="190"></canvas>
   <div id="dash"><b id="speed">0</b> km/h<div id="chargeBar"><i id="charge"></i></div></div>
   <div id="pads">
-    <div id="steerPad"><span>&#9664;</span><i id="knob"></i><span>&#9654;</span></div>
-    <button id="driftBtn">DRIFT</button>
-    <button id="brakeBtn">BRAKE</button>
-    <button id="itemBtn">ITEM</button>
-    <button class="topBtn" id="pauseBtn" aria-label="Pause">&#10074;&#10074;</button>
-    <button class="topBtn" id="resetBtn" aria-label="Back on track">&#8634;</button>
-    <button class="topBtn" id="muteBtn" aria-label="Sound">&#9834;</button>
+    <div id="floatZone"></div>
+    <div id="steerPad" data-pad="Steering"><span>&#9664;</span><i id="knob"></i><span>&#9654;</span></div>
+    <button id="driftBtn" data-pad="Drift">DRIFT</button>
+    <button id="brakeBtn" data-pad="Brake">BRAKE</button>
+    <button id="itemBtn" data-pad="Item">ITEM</button>
+    <button class="topBtn" id="pauseBtn" data-pad="Pause" aria-label="Pause">&#10074;&#10074;</button>
+    <button class="topBtn" id="resetBtn" data-pad="Back on track" aria-label="Back on track">&#8634;</button>
+    <button class="topBtn" id="muteBtn" data-pad="Sound" aria-label="Sound">&#9834;</button>
   </div>
 </div>
 <div id="overlay"><div class="card">
@@ -277,6 +320,13 @@
   <button id="again">Race again</button>
   <button id="quit">Back to garage</button>
 </div></div>
+
+<div id="padEdit">
+  <b>Drag the controls anywhere</b>
+  <small id="padSel">Tap a control to resize it</small>
+  <label>Size <input type="range" id="padSize" min=".6" max="1.7" step=".05" value="1" disabled></label>
+  <div class="netRow"><button id="padReset">Reset</button><button id="padDone">Done</button></div>
+</div>
 
 <div id="log"><div class="card">
   <h3>Update log</h3>
@@ -291,10 +341,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-15.9';
+const BUILD = '2026-11-16.1';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
+  ['16 Nov 2026', [
+    'Phone controls: pick your steering (Slider, Joystick, Floating stick, Arrows or Tilt) and move or resize every button',
+  ]],
   ['15 Nov 2026', [
     'Frosty Peaks: the grandstand sits lower',
     'Smoother, rounder railings on every track',
@@ -3547,32 +3600,178 @@ $('log').onclick = e => { if (e.target === $('log')) $('log').classList.remove('
 addEventListener('keydown', e => { if (e.code === 'Escape') $('log').classList.remove('show'); });
 addEventListener('blur', () => { for (const c in keys) keys[c] = false; releaseTouch(); });
 
-// On-screen controls. The steering pad reads how far your thumb is from its centre, so you can slide across without lifting.
-const steerPad = $('steerPad'), knob = $('knob');
-const KNOB_TRAVEL = 46, STEER_DEAD = .08, STEER_FULL = .63;
-let padPointer = null;
-function setSteer(v) { touch.steer = -v; knob.style.transform = `translateX(${v * KNOB_TRAVEL}px)`; }
+// On-screen controls. Pick a steering style under Phone controls in the menu, and drag any control anywhere with
+// Move & resize controls. Saved in localStorage 'kart-controls', with a separate layout for sideways and upright.
+const steerPad = $('steerPad'), knob = $('knob'), floatZone = $('floatZone'), arrows = steerPad.querySelectorAll('span');
+const STEER_STYLES = { slider: 'Slider', stick: 'Joystick', float: 'Floating', arrows: 'Arrows', tilt: 'Tilt' };
+const STEER_HELP = {
+  slider: 'Slide your left thumb to steer.',
+  stick: 'Push the joystick left and right to steer.',
+  float: 'Put your thumb anywhere on the left side and slide it to steer.',
+  arrows: 'Hold the arrows to steer.',
+  tilt: 'Tilt your phone like a steering wheel to steer.',
+};
+const PAD_IDS = ['steerPad', 'driftBtn', 'brakeBtn', 'itemBtn', 'pauseBtn', 'resetBtn', 'muteBtn'];
+const ctl = { style: 'slider', land: {}, port: {} };
+try { Object.assign(ctl, JSON.parse(localStorage.getItem('kart-controls') || '{}')); } catch (e) {}
+if (!STEER_STYLES[ctl.style]) ctl.style = 'slider';
+function saveControls() { try { localStorage.setItem('kart-controls', JSON.stringify(ctl)); } catch (e) {} }
+const padSide = () => innerHeight > innerWidth ? 'port' : 'land';
+// A saved control sits with its centre at x, y (fractions of the screen), scaled by s. No saved spot = the default layout.
+function placePad(id, at) {
+  const el = $(id), p = ctl[padSide()][id], st = el.style;
+  if (!p && !at) { st.left = st.top = st.right = st.bottom = st.transform = ''; return; }
+  st.left = at ? at.x + 'px' : p.x * 100 + '%'; st.top = at ? at.y + 'px' : p.y * 100 + '%';
+  st.right = st.bottom = 'auto';
+  st.transform = `translate(-50%, -50%) scale(${p ? p.s : 1})`;
+}
+function placePads() { PAD_IDS.forEach(id => placePad(id)); }
+
+const KNOB_TRAVEL = 46, STEER_DEAD = .08, STEER_FULL = .63, STICK_TRAVEL = 46;
+let padPointer = null, padC = null;
+function setSteer(v, kx = 0, ky = 0) {
+  touch.steer = -v;
+  const st = ctl.style;
+  knob.style.transform = st === 'slider' ? `translateX(${v * KNOB_TRAVEL}px)` : st === 'stick' || st === 'float' ? `translate(${kx * STICK_TRAVEL}px, ${ky * STICK_TRAVEL}px)` : '';
+  arrows[0].classList.toggle('held', st === 'arrows' && v < 0);
+  arrows[1].classList.toggle('held', st === 'arrows' && v > 0);
+}
+function endSteer() {
+  padPointer = null; padC = null; setSteer(0);
+  if (ctl.style === 'float') { steerPad.classList.remove('live'); placePad('steerPad'); }
+}
 function releaseTouch() {
-  padPointer = null;
-  setSteer(0);
+  endSteer();
   touch.drift = touch.brake = false;
   $('driftBtn').classList.remove('held');
   $('brakeBtn').classList.remove('held');
 }
+// padC is the centre of the steering control (where the thumb landed, for the floating stick) and half its width on screen
 function steerFrom(e) {
-  const box = steerPad.getBoundingClientRect(), off = (e.clientX - box.left - box.width / 2) / (box.width / 2);
-  setSteer(Math.sign(off) * clamp((Math.abs(off) - STEER_DEAD) / (STEER_FULL - STEER_DEAD), 0, 1));
+  const dx = e.clientX - padC.x, dy = e.clientY - padC.y, st = ctl.style;
+  if (st === 'slider') {
+    const off = dx / padC.half;
+    setSteer(Math.sign(off) * clamp((Math.abs(off) - STEER_DEAD) / (STEER_FULL - STEER_DEAD), 0, 1));
+  } else if (st === 'arrows') {
+    setSteer(Math.abs(dx) < padC.half * .1 ? 0 : Math.sign(dx));
+  } else {
+    const r = padC.half * .62;
+    let nx = dx / r, ny = dy / r;
+    const len = Math.hypot(nx, ny);
+    if (len > 1) { nx /= len; ny /= len; }
+    setSteer(Math.sign(nx) * clamp((Math.abs(nx) - .15) / .7, 0, 1), nx, ny);
+  }
+}
+function padScale() { return ctl[padSide()].steerPad?.s || 1; }
+function grabSteer(el, e, c) {
+  if (padPointer !== null || document.body.classList.contains('editPads')) return;
+  padPointer = e.pointerId;
+  padC = c;
+  try { el.setPointerCapture(e.pointerId); } catch (err) {}
+  steerFrom(e);
 }
 steerPad.addEventListener('pointerdown', e => {
+  const box = steerPad.getBoundingClientRect();
+  grabSteer(steerPad, e, { x: box.left + box.width / 2, y: box.top + box.height / 2, half: box.width / 2 });
+});
+// The floating stick jumps to wherever your thumb lands on the left half of the screen
+floatZone.addEventListener('pointerdown', e => {
   if (padPointer !== null) return;
-  padPointer = e.pointerId;
-  steerPad.setPointerCapture(e.pointerId);
-  steerFrom(e);
+  placePad('steerPad', { x: e.clientX, y: e.clientY });
+  steerPad.classList.add('live');
+  grabSteer(floatZone, e, { x: e.clientX, y: e.clientY, half: steerPad.offsetWidth * padScale() / 2 });
 });
-steerPad.addEventListener('pointermove', e => { if (e.pointerId === padPointer) steerFrom(e); });
-for (const type of ['pointerup', 'pointercancel']) steerPad.addEventListener(type, e => {
-  if (e.pointerId === padPointer) { padPointer = null; setSteer(0); }
+for (const el of [steerPad, floatZone]) {
+  el.addEventListener('pointermove', e => { if (e.pointerId === padPointer) steerFrom(e); });
+  for (const type of ['pointerup', 'pointercancel']) el.addEventListener(type, e => { if (e.pointerId === padPointer) endSteer(); });
+}
+// Tilt: how far the screen's left-right line leans, worked out from the gravity direction so it doesn't matter
+// how far back you hold the phone. About 25 degrees is full lock.
+addEventListener('deviceorientation', e => {
+  if (ctl.style !== 'tilt' || e.beta == null || e.gamma == null) return;
+  const b = e.beta * Math.PI / 180, g = e.gamma * Math.PI / 180;
+  const a = (screen.orientation ? screen.orientation.angle : window.orientation || 0) * Math.PI / 180;
+  const upX = -Math.cos(b) * Math.sin(g), upY = Math.sin(b);
+  const lean = upX * Math.cos(a) - upY * Math.sin(a);
+  touch.steer = Math.sign(lean) * clamp((Math.abs(lean) - .04) / .38, 0, 1);
 });
+function setSteerStyle(style) {
+  releaseTouch();
+  ctl.style = style; saveControls();
+  steerPad.dataset.style = style; document.body.dataset.steer = style;
+  knob.style.transform = '';
+  document.querySelectorAll('#steerStyles button').forEach(b => b.setAttribute('aria-pressed', b.dataset.style === style));
+  $('ctlMsg').textContent = STEER_HELP[style];
+  placePads();
+  if (TOUCH) $('help').innerHTML = `Your kart goes by itself. ${STEER_HELP[style]} Hold Drift through corners and let go for a boost. Drive through ? blocks and tap Item.<span id="rotateTip">Turn your phone sideways for a wider view</span>`;
+}
+for (const [style, name] of Object.entries(STEER_STYLES)) {
+  const btn = document.createElement('button');
+  btn.textContent = name; btn.dataset.style = style;
+  btn.onclick = () => {
+    // iPhones ask for permission to read the tilt, and only from a tap
+    if (style === 'tilt' && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(r => {
+        if (r === 'granted') setSteerStyle('tilt'); else $('ctlMsg').textContent = 'Tilt needs motion access. Allow it in Settings > Safari, then try again.';
+      }).catch(() => { $('ctlMsg').textContent = 'Could not turn on tilt on this phone.'; });
+      return;
+    }
+    setSteerStyle(style);
+  };
+  $('steerStyles').append(btn);
+}
+
+// Move & resize controls
+let editSel = null, editDrag = null;
+const editing = () => document.body.classList.contains('editPads');
+// Gives every control a saved spot (its current one) so they can all be dragged
+function fillLayout() {
+  const lay = ctl[padSide()];
+  for (const id of PAD_IDS) {
+    if (lay[id]) continue;
+    const r = $(id).getBoundingClientRect();
+    if (r.width) lay[id] = { x: (r.left + r.width / 2) / innerWidth, y: (r.top + r.height / 2) / innerHeight, s: 1 };
+  }
+  placePads();
+}
+function selectPad(el) {
+  editSel = el;
+  PAD_IDS.forEach(id => $(id).classList.toggle('sel', $(id) === el));
+  const p = el && ctl[padSide()][el.id];
+  $('padSize').disabled = !p;
+  if (p) $('padSize').value = p.s;
+  $('padSel').textContent = el ? `${el.dataset.pad}: drag to move, slide to resize` : 'Tap a control to resize it';
+}
+function editPads(on) {
+  releaseTouch();
+  document.body.classList.toggle('editPads', on);
+  if (on) { $('itemBtn').hidden = false; fillLayout(); } else saveControls();
+  selectPad(null);
+}
+$('editPadsBtn').onclick = () => editPads(true);
+$('padDone').onclick = () => editPads(false);
+$('padReset').onclick = () => { ctl[padSide()] = {}; placePads(); fillLayout(); selectPad(null); };
+$('padSize').oninput = () => {
+  const p = editSel && ctl[padSide()][editSel.id];
+  if (p) { p.s = +$('padSize').value; placePad(editSel.id); }
+};
+$('hud').addEventListener('pointerdown', e => {
+  if (!editing()) return;
+  e.stopPropagation(); e.preventDefault();
+  const el = e.target.closest('[data-pad]'), p = el && ctl[padSide()][el.id];
+  selectPad(el);
+  if (p) editDrag = { id: el.id, pid: e.pointerId, dx: p.x * innerWidth - e.clientX, dy: p.y * innerHeight - e.clientY };
+}, true);
+$('hud').addEventListener('click', e => { if (editing()) e.stopPropagation(); }, true);
+addEventListener('pointermove', e => {
+  if (!editDrag || e.pointerId !== editDrag.pid) return;
+  const p = ctl[padSide()][editDrag.id];
+  p.x = clamp((e.clientX + editDrag.dx) / innerWidth, .02, .98);
+  p.y = clamp((e.clientY + editDrag.dy) / innerHeight, .02, .98);
+  placePad(editDrag.id);
+});
+for (const type of ['pointerup', 'pointercancel']) addEventListener(type, e => { if (editDrag && e.pointerId === editDrag.pid) editDrag = null; });
+addEventListener('resize', () => { placePads(); if (editing()) { fillLayout(); selectPad(editSel); } });
 function holdButton(btn, set) {
   const hold = on => { set(on); btn.classList.toggle('held', on); };
   btn.addEventListener('pointerdown', e => { btn.setPointerCapture(e.pointerId); hold(true); });
@@ -3585,8 +3784,8 @@ $('pauseBtn').onclick = togglePause;
 $('resetBtn').onclick = backOnTrack;
 $('muteBtn').onclick = toggleSound;
 $('muteBtn').classList.toggle('off', sound.muted);
+setSteerStyle(ctl.style);
 if (TOUCH) {
-  $('help').innerHTML = 'Your kart goes by itself. Slide your left thumb to steer. Hold Drift through corners and let go for a boost. Drive through ? blocks and tap Item.<span id="rotateTip">Turn your phone sideways for a wider view</span>';
   addEventListener('contextmenu', e => e.preventDefault());
   document.addEventListener('gesturestart', e => e.preventDefault());
 }
