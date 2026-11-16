@@ -355,11 +355,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.9';
+const BUILD = '2026-11-16.10';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Coral Tunnel: the sides of the road in the tunnel are solid now, so you no longer fall through them',
     'New track: Coral Tunnel. Start on a sunny beach, then dive into a see-through tunnel under the sea with coral, fish, sharks and a whale. Grand Prix is now five tracks',
     'Phones: the speed and boost meter now sits at the bottom middle of the screen',
     'Time trial is now Sprint kart only, so times are fair',
@@ -1606,6 +1607,8 @@ function groundAt(x, z) {
   return (GROUND[b * w + a] * (1 - fx) + GROUND[b * w + a + 1] * fx) * (1 - fz) + (GROUND[(b + 1) * w + a] * (1 - fx) + GROUND[(b + 1) * w + a + 1] * fx) * fz;
 }
 function surfaceY(x, z, i, lat) {
+  // In and around the glass tunnel the walkway either side of the road is solid, right out to the glass
+  if (TUBE[i] && Math.abs(lat) <= TUBE_R - .2) return cy[i];
   return Math.abs(lat) <= HW + .5 ? cy[i] : groundAt(x, z);
 }
 
@@ -2437,7 +2440,8 @@ function buildSea(w, rnd, nearStand, lam, ripple, dot) {
     for (let k = -W; k < W * 2; k += 16) { x.beginPath(); x.moveTo(k, 0); x.lineTo(k + H, H); x.stroke(); x.beginPath(); x.moveTo(k, H); x.lineTo(k + H, 0); x.stroke(); }
   }) }), rail = lam({ color: 0x1b6f9c, side: THREE.DoubleSide });
   for (const [a, b] of tubeRuns) for (const sd of [-1, 1]) {
-    ribbon(a, b, sd * (sd > 0 ? TUBE_R - .2 : HW + .4), sd * (sd > 0 ? HW + .4 : TUBE_R - .2), .03, grate, Math.round((b - a) * DS / 3), w);
+    // The walkway runs on through the funnels at each end, so there's solid floor wherever the ground was dug away
+    ribbon(a - TUBE_FUNNEL, b + TUBE_FUNNEL, sd * (sd > 0 ? TUBE_R - .2 : HW + .4), sd * (sd > 0 ? HW + .4 : TUBE_R - .2), .03, grate, Math.round((b - a + 2 * TUBE_FUNNEL) * DS / 3), w);
     // The rail: a low wall at the foot of the glass
     const pos = [], idx = [];
     for (let i = a; i <= b; i++) { const lat = sd * (TUBE_R - .25), x = cx[i] + nxOf(i) * lat, z = cz[i] + nzOf(i) * lat; pos.push(x, cy[i] - 2, z, x, cy[i] + .8, z); }
