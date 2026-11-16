@@ -280,6 +280,7 @@
   <h2>CPU level</h2>
   <div class="levels" id="levels"></div>
   <h2>Kart</h2>
+  <p class="hostNote" id="ttKartNote" hidden>Time trial is Sprint only, so everyone's times are fair.</p>
   <div class="bodies" id="bodies"></div>
   <h2>Stats</h2>
   <div id="stats"></div>
@@ -355,11 +356,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.6';
+const BUILD = '2026-11-16.7';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Time trial is now Sprint kart only, so times are fair',
+    'Meadow Ring: more room before the rail on the inside of the bend before the last two corners',
     'New mode: Time trial. Just you and the clock for 3 laps, and your best lap is your score. Records are kept for every track',
     'Phones: the speed and boost meter can now be moved and resized too, in Move & resize controls',
     'Colour wheel in the Paint section: pick any primary and secondary colour for your kart',
@@ -1101,15 +1104,17 @@ const turnBox = $('turn'), spinBox = $('spin'), steerBox = $('steer'), numberBox
 
 const net = { peer: null, host: false, room: '', me: '', up: null, conns: new Map(), players: [], ready: new Set(), goTimer: 0 };
 let kart = null;
+// Time trials are all on the Sprint kart, so times can be compared fairly. Your own pick is kept for other modes.
+const myBody = () => state.mode === 'tt' && !net.room ? 'sprint' : state.body;
 function rebuild() {
   if (kart) { stage.remove(kart.group); kart.dispose(); }
-  kart = buildKart(state);
+  kart = buildKart({ ...state, body: myBody() });
   stage.add(kart.group);
   saveKart();
-  document.querySelectorAll('.body').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.body));
+  document.querySelectorAll('#bodies .body').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === myBody()));
   document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.paint.name));
   syncWheel();
-  $('stats').innerHTML = Object.entries(BODIES[state.body].stats).map(([k, v]) => `<div class="stat">${k}<div class="bar"><i style="width:${v * 20}%"></i></div></div>`).join('');
+  $('stats').innerHTML = Object.entries(BODIES[myBody()].stats).map(([k, v]) => `<div class="stat">${k}<div class="bar"><i style="width:${v * 20}%"></i></div></div>`).join('');
   netProfileChanged();
 }
 
@@ -1222,6 +1227,7 @@ const TRACKS = {
       [-140, 175, 2], [-186, 120, 1], [-150, 58, 2], [-96, 30, 3], [-120, -30, 3], [-180, -60, 2], [-178, -115, 1], [-125, -132, 0],
     ],
     ramps: [[14, 4.5], [445, -4.5], [620, 4.5]], pads: [[62, 0], [300, 4], [560, -4], [842, 3]], blocks: [150, 420, 700, 975],
+    islandMove: [[-124, 8, [-130, 8, 5]]],   // more room on the inside of the bend before the last two corners
   },
   snow: {
     name: 'Frosty Peaks', icon: '❄️', blurb: 'A twisty mountain loop, a long run downhill and hairpins round a frozen lake', theme: 'snow', pond: { x: 35, z: 10, r: 26 }, standRight: true, standDrop: 6,
@@ -1487,8 +1493,12 @@ function buildBarriers() {
       }
       const det = a11 * a22 - a12 * a12;
       if (Math.abs(det) < 1e-6) continue;
-      const ix = (b1 * a22 - b2 * a12) / det, iz = (a11 * b2 - a12 * b1) / det;
+      let ix = (b1 * a22 - b2 * a12) / det, iz = (a11 * b2 - a12 * b1) / det;
       let dmin = 1e9; for (let j = 0; j < N; j++) dmin = Math.min(dmin, Math.hypot(ix - cx[j], iz - cz[j]));
+      // A track can move an island further from the road where the rail felt too close: islandMove [[x, z, [newX, newZ, r], ...]]
+      // (any island within 15m of x, z is swapped for the islands listed)
+      const mv = (TRACK.islandMove || []).find(([ox, oz]) => Math.hypot(ix - ox, iz - oz) < 15);
+      if (mv) { for (const isl of mv.slice(2)) if (!islands.some(([x, z]) => x === isl[0] && z === isl[1])) islands.push(isl); continue; }
       if (dmin > HW + 3.5) islands.push([ix, iz, Math.max(1.5, Math.min(5, dmin - BAR_MIN, dmin - HW - 2))]);
     }
   }
@@ -2788,7 +2798,7 @@ function startRace(plan) {
   document.body.classList.add('racing');
   $('overlay').className = '';
   const tt = !plan && !gp && state.mode === 'tt';
-  const karts = plan ? onlineGrid(plan) : tt ? [makeRacer('You', state, true)] : soloGrid(), you = karts.find(k => k.isPlayer);
+  const karts = plan ? onlineGrid(plan) : tt ? [makeRacer('You', { ...state, body: 'sprint' }, true)] : soloGrid(), you = karts.find(k => k.isPlayer);
   karts.forEach((k, g) => {
     const back = 9 + g * 3.6;
     placeOnTrack(k, -Math.round(back / DS), g % 2 ? -4 : 4);
@@ -3968,19 +3978,21 @@ function ttRecords() { try { return JSON.parse(localStorage.getItem('kart-tt') |
 function saveTtRecords(r) { try { localStorage.setItem('kart-tt', JSON.stringify(r)); } catch (e) {} }
 function drawTrackPicker() {
   const inRoom = !!net.room, cup = state.mode === 'gp', guest = inRoom && !net.host, locked = cup || guest;
-  if (inRoom && state.mode === 'tt') state.mode = 'race';   // time trials are on your own
+  if (inRoom && state.mode === 'tt') { state.mode = 'race'; setTimeout(rebuild); }   // time trials are on your own
   const tt = state.mode === 'tt';
   document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.mode));
   document.querySelectorAll('#modes button').forEach(b => { const off = guest || inRoom && b.dataset.id === 'tt'; b.disabled = off; b.style.opacity = off ? .55 : ''; });
   // Time trials are always 3 laps with no lucky blocks
   document.querySelectorAll('#laps button').forEach(b => { b.disabled = tt; b.style.opacity = tt ? .55 : ''; b.setAttribute('aria-pressed', +b.textContent === (tt ? TT_LAPS : state.laps)); });
   $('itemsBox').disabled = tt; $('itemsBox').checked = tt ? false : state.items;
+  document.querySelectorAll('#bodies .body').forEach(b => { const off = tt && b.dataset.id !== 'sprint'; b.disabled = off; b.style.opacity = off ? .45 : ''; });
+  $('ttKartNote').hidden = !tt;
   document.querySelectorAll('#tracks .body').forEach(b => { b.setAttribute('aria-pressed', !locked && b.dataset.id === state.track); b.disabled = locked; b.style.opacity = locked ? .55 : ''; });
   $('gpNote').hidden = !(cup || tt) || guest;
   if (cup) $('gpNote').textContent = `Race all four tracks in a random order, picked fresh for every cup. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!`;
   else if (tt) {
     const rec = ttRecords()[state.track];
-    $('gpNote').textContent = `Just you and the clock: 3 laps, no CPUs, no lucky blocks. Your best lap is your score. ` +
+    $('gpNote').textContent = `Just you and the clock: 3 laps on the Sprint kart, no CPUs, no lucky blocks. Your best lap is your score. ` +
       (rec ? `Your records on ${TRACKS[state.track].name}: best lap ${fmtTime(rec.lap)}, best 3 laps ${rec.total ? fmtTime(rec.total) : '-'}.` : `No time set on ${TRACKS[state.track].name} yet.`);
   }
   // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow. In Canyon Run it never
@@ -3991,7 +4003,7 @@ function drawTrackPicker() {
 Object.entries(MODES).forEach(([key, label]) => {
   const btn = document.createElement('button');
   btn.textContent = label; btn.dataset.id = key;
-  btn.onclick = () => { state.mode = key; saveRaceOptions(); drawRoom(); };
+  btn.onclick = () => { state.mode = key; saveRaceOptions(); drawRoom(); rebuild(); };
   $('modes').append(btn);
 });
 Object.entries(TRACKS).forEach(([id, t]) => {
