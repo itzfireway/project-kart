@@ -355,11 +355,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.10';
+const BUILD = '2026-11-16.11';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'Coral Tunnel: a new layout like the Bahrain circuit, with a twisty start straight on the beach',
     'Coral Tunnel: the sides of the road in the tunnel are solid now, so you no longer fall through them',
     'New track: Coral Tunnel. Start on a sunny beach, then dive into a see-through tunnel under the sea with coral, fish, sharks and a whale. Grand Prix is now five tracks',
     'Phones: the speed and boost meter now sits at the bottom middle of the screen',
@@ -1269,11 +1270,16 @@ const TRACKS = {
     ramps: [[440, -4.5], [726, 4.5]], pads: [[232, 0], [369, 4], [697, -4], [45, 3]],
   },
   sea: {
-    name: 'Coral Tunnel', icon: '🐠', blurb: 'Start on a sunny beach, then dive into a glass tunnel under the sea', theme: 'sea', pond: null, standRight: true, tube: true,
+    // Layout traced from a Bahrain International Circuit map the user sent, with esses on the start straight
+    name: 'Coral Tunnel', icon: '🐠', blurb: 'Start on a sunny beach, then dive into a glass tunnel under the sea', theme: 'sea', pond: null, tube: true,
     pts: [
-      [-20, 165, 3], [60, 165, 3], [125, 162, 3], [168, 140, 2.5], [182, 95, -5], [176, 40, -15], [150, 0, -21], [110, -30, -23],
-      [120, -80, -24], [90, -130, -24], [30, -150, -24], [-20, -120, -23], [-10, -60, -22], [-50, -20, -22], [-110, -40, -23], [-160, -80, -24],
-      [-186, -30, -22], [-178, 30, -15], [-172, 85, -6], [-160, 128, 1.5], [-128, 158, 3], [-75, 166, 3],
+      [-19, 165, 3], [-56, 158, 3], [-94, 172, 3], [-131, 158, 3], [-162, 165, 3], [-180, 159, 2], [-172, 131, 0], [-176, 103, -4],
+      [-177, 50, -12], [-174, -51, -20], [-168, -134, -22], [-160, -167, -22], [-150, -178, -22], [-135, -165, -22], [-109, -134, -22], [-87, -114, -23],
+      [-69, -101, -23], [-61, -81, -23], [-58, -51, -23], [-50, -22, -23], [-27, 9, -24], [-5, 28, -24], [5, 36, -24], [-4, 48, -24],
+      [-27, 44, -24], [-66, 43, -24], [-109, 37, -24], [-129, 48, -24], [-133, 65, -24], [-118, 86, -24], [-66, 90, -24], [15, 91, -24],
+      [71, 91, -24], [92, 78, -24], [93, 44, -24], [83, 17, -23], [58, 0, -23], [37, -14, -23], [22, -42, -23], [19, -79, -23],
+      [25, -116, -22], [37, -147, -22], [50, -158, -22], [62, -145, -22], [89, -79, -20], [120, -5, -14], [151, 68, -6], [179, 131, 0],
+      [182, 155, 2.5], [170, 168, 3], [145, 165, 3], [120, 158, 3], [92, 172, 3], [64, 158, 3], [37, 169, 3], [15, 165, 3],
     ],
   },
 };
@@ -1288,7 +1294,7 @@ const tx = new Float32Array(N), tz = new Float32Array(N);                       
 const kap = new Float32Array(N), vmax = new Float32Array(N);                           // signed curvature, safe CPU speed
 // Glass tunnel (tracks with tube: true): TUBE is 1 where the road runs inside it and 2 on the short funnel of wall
 // leading into each mouth. It's a half pipe TUBE_R wide either side of the centre line and TUBE_H tall.
-const TUBE = new Uint8Array(N), TUBE_R = 13, TUBE_H = 11, TUBE_FUNNEL = 16;
+const TUBE = new Uint8Array(N), TUBE_R = 13, TUBE_H = 11, TUBE_FUNNEL = 30;
 const LIM_L = new Float32Array(N), LIM_R = new Float32Array(N);                        // how far out the barrier sits, left and right
 let DS = 1, TRACK = null, TRACK_ID = '', POND = null, RAMPS = [], PADS = [], BLOCK_ROWS = [];
 const nxOf = i => tz[i], nzOf = i => -tx[i];   // unit vector to the left of the track at sample i
@@ -1324,6 +1330,17 @@ function loadTrack(id) {
   TUBE.fill(0);
   if (TRACK.tube) {
     for (let i = 0; i < N; i++) if (cy[i] < 1.2) TUBE[i] = 1;
+    // Out on the beach the rail runs a steady 12m or so from the road edge (closer on the inside of the esses so
+    // it never folds over itself), smoothed so it flows. The rail is drawn exactly on this line.
+    for (const lim of [LIM_L, LIM_R]) {
+      for (let i = 0; i < N; i++) if (!TUBE[i]) lim[i] = Math.min(lim[i], 21, Math.max(HW + 5, .8 / Math.max(.001, Math.abs(kap[i]))));
+      const m = Float32Array.from(lim);
+      for (let i = 0; i < N; i++) if (!TUBE[i]) { let v = 99; for (let j = -6; j <= 6; j++) v = Math.min(v, m[wrapI(i + j)]); lim[i] = v; }
+      for (let pass = 0; pass < 3; pass++) {
+        const a = Float32Array.from(lim);
+        for (let i = 0; i < N; i++) if (!TUBE[i]) { let t = 0; for (let j = -5; j <= 5; j++) t += a[wrapI(i + j)]; lim[i] = Math.min(a[i], t / 11 + .4); }
+      }
+    }
     const inside = TUBE_R - 1.2;
     for (let i = 0; i < N; i++) {
       if (TUBE[i] !== 1) continue;
@@ -1869,7 +1886,7 @@ function buildWorld() {
   const wallPos = [], wallUv = [], wallIdx = [];
   for (const bar of BARS) {
     const m = bar.length / 2;
-    let u = 0, lx = bar[0], lz = bar[1], wasCut = false;
+    let u = 0, lx = bar[0], lz = bar[1];
     for (let i = 0; i <= m; i++) {
       const j = i % m, x = bar[j * 2], z = bar[j * 2 + 1];
       u += Math.hypot(x - lx, z - lz) * .06; lx = x; lz = z;   // texture runs by distance so tight bits don't squash it
@@ -1879,21 +1896,21 @@ function buildWorld() {
       const y = Math.min(g0, g1, g2) - .3, top = Math.max(g0, g1, g2) + 1.5, b = wallPos.length / 3;
       wallPos.push(x, y, z, x, top, z);
       wallUv.push(u, 0, u, 1);
-      // No tyre wall round the glass tunnel (the glass is the wall) or its funnels (drawn below)
-      const cut = TRACK.tube && TUBE[nearestAny(x, z).i] > 0;
-      if (i && !cut && !wasCut) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
-      wasCut = cut;
+      if (i && !TRACK.tube) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
     }
   }
-  // Funnels: a wall each side closing in from the tyre wall to the tunnel mouth
+  // Tracks with a glass tunnel: the glass is the wall inside it, and everywhere else the rail runs exactly along
+  // the line the karts are stopped at, closing in to meet the glass at each mouth
   if (TRACK.tube) for (let i = 0; i < N; i++) {
-    if (TUBE[i] !== 1) continue;
-    for (const dir of [-1, 1]) {
-      if (TUBE[wrapI(i + dir)] === 1) continue;
-      for (const [lim, sd] of [[LIM_L, 1], [LIM_R, -1]]) for (let k = 0; k <= TUBE_FUNNEL; k++) {
-        const j = wrapI(i + dir * k), lat = sd * (lim[j] + (k ? .6 : 1.2)), x = cx[j] + nxOf(j) * lat, z = cz[j] + nzOf(j) * lat, g = groundAt(x, z), b = wallPos.length / 3;
+    if (TUBE[i] !== 1 || TUBE[wrapI(i + 1)] === 1) continue;   // i is the last sample of a stretch of tunnel
+    let n = 1; while (n < N && TUBE[wrapI(i + n)] !== 1) n++;   // samples out in the open, up to the next tunnel
+    for (const [lim, sd] of [[LIM_L, 1], [LIM_R, -1]]) {
+      let u = 0;
+      for (let k = 0; k <= n; k++) {
+        const j = wrapI(i + k), lat = sd * (lim[j] + (k && k < n ? .6 : 1.2)), x = cx[j] + nxOf(j) * lat, z = cz[j] + nzOf(j) * lat, g = groundAt(x, z), b = wallPos.length / 3;
+        if (k) u += DS * .06;
         wallPos.push(x, g - .4, z, x, Math.max(g, cy[j]) + 1.5, z);
-        wallUv.push(k * DS * .06, 0, k * DS * .06, 1);
+        wallUv.push(u, 0, u, 1);
         if (k) wallIdx.push(b - 2, b - 1, b, b - 1, b + 1, b);
       }
     }
