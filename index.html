@@ -243,8 +243,8 @@
   <button id="start">Start race</button>
   <div id="netPanel">
     <h2>Race friends</h2>
-    <div id="netMenu">
       <label>Your name <input type="text" id="netName" maxlength="12" autocomplete="off" spellcheck="false"></label>
+    <div id="netMenu">
       <button id="netCreate">Create room</button>
       <div class="netRow"><input type="text" id="netCode" placeholder="Room code" maxlength="8" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="netJoin">Join</button></div>
     </div>
@@ -344,11 +344,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.2';
+const BUILD = '2026-11-16.3';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['16 Nov 2026', [
+    'You can now change your name while you are in a room, and everyone sees the new name',
     'Phone controls now show a picture of each steering style so you can see what you are picking',
     'Phone controls: pick your steering (Slider, Joystick, Floating stick, Arrows or Tilt) and move or resize every button',
   ]],
