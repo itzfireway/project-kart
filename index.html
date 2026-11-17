@@ -101,6 +101,12 @@
   #item { position: absolute; top: 14px; left: 50%; width: 84px; height: 84px; margin-left: -42px; display: flex; align-items: center; justify-content: center; font-size: 46px; font-style: normal; background: rgba(18, 20, 28, .6); border: 3px solid rgba(255, 255, 255, .45); border-radius: 18px; }
   #item.has { border-color: var(--hot); box-shadow: 0 0 20px rgba(255, 207, 51, .55); }
   #item.roll { border-color: #fff; }
+  .coinIco { display: block; width: .95em; height: .95em; border-radius: 50%; position: relative;
+    background: radial-gradient(circle at 35% 30%, #fff6b8 0 8%, #ffd84a 22%, #f2b51a 55%, #c98a06 100%);
+    box-shadow: inset 0 0 0 .06em #a86f02, inset 0 0 0 .1em #ffe27a, 0 .03em .06em rgba(0,0,0,.35); }
+  .coinIco::after { content: ''; position: absolute; inset: .2em; border-radius: 50%;
+    background: radial-gradient(circle at 60% 65%, #e0a312, #ffd34a 70%);
+    box-shadow: inset .02em .03em .04em rgba(120,70,0,.55), inset -.02em -.03em .04em rgba(255,240,170,.8); }
   #item.has #itemIcon { animation: pop .3s ease-out; }
   #itemCount { position: absolute; right: 6px; bottom: 2px; font-size: 17px; font-weight: 900; font-style: italic; }
   #item2 { position: absolute; top: 28px; left: 50%; width: 56px; height: 56px; margin-left: 50px; display: flex; align-items: center; justify-content: center; font-size: 30px; font-style: normal; background: rgba(18, 20, 28, .5); border: 2px solid rgba(255, 255, 255, .35); border-radius: 13px; }
@@ -360,12 +366,14 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-17.2';
+const BUILD = '2026-11-17.3';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['17 Nov 2026', [
-    'New item: Freeze ❄️ turns the closest kart within 10m into a block of ice for a moment',
+    'Freeze ❄️ now always hits the closest opponent, however far away they are',
+    'The Coin 🪙 is now a shiny gold coin in the item box on every device',
+    'New item: Freeze ❄️ turns the closest kart into a block of ice for a moment',
     'New item: Coin 🪙 it does nothing at all',
     'Phones: Tilt steering fixed (it used to just turn left)',
   ]],
@@ -2792,8 +2800,8 @@ const ITEMS = {
   freeze: { icon: '❄️', name: 'Freeze', uses: 1 },
   coin: { icon: '🪙', name: 'Coin', uses: 1 },
 };
-// Freeze: turns the single closest kart within FREEZE_RANGE metres into a block of ice for a moment. A coin does nothing.
-const FREEZE_RANGE = 10, FREEZE_TIME = 2.5;
+// Freeze: turns the single closest opponent (however far away) into a block of ice for a moment. A coin does nothing.
+const FREEZE_TIME = 2.5;
 // Mega kart: grow big and heavy for a while. Ram another kart to knock it aside and slow it down for a bit.
 const MEGA_TIME = 8, MEGA_SIZE = 1.7, SLOW_TIME = 2.5, SLOW_SPEED = .75;
 // How close (centre to centre) counts as a mega kart touching someone. Generous on purpose: a big kart is long, and
@@ -2939,9 +2947,9 @@ function zapAll(owner) {
   race.rainT = ZAP_RAIN;
 }
 
-// The one kart closest to k, if any is within FREEZE_RANGE
+// The one kart closest to k, at any distance
 function freezeTarget(k) {
-  let best = null, bd = FREEZE_RANGE * FREEZE_RANGE;
+  let best = null, bd = Infinity;
   for (const o of race.karts) {
     if (o === k || o.finish !== null) continue;
     const d = (o.x - k.x) ** 2 + (o.y - k.y) ** 2 + (o.z - k.z) ** 2;
@@ -3323,7 +3331,6 @@ function thinkCPU(k, h) {
     if (it === 'oil') go = go && (karts.some(o => o !== k && gapTo(o) < -2 && gapTo(o) > -30) || k.itemWait < -6);
     if (it === 'rocket') go = go && (karts.some(o => o !== k && gapTo(o) > 6 && gapTo(o) < 140) || k.itemWait < -6);
     if (it === 'mega') go = go && (karts.some(o => o !== k && Math.abs(gapTo(o)) < 25) || k.itemWait < -6);
-    if (it === 'freeze') go = go && (!!freezeTarget(k) || k.itemWait < -10);
     if (go) { k.wantItem = true; k.itemWait = .5 + Math.random() * 1.2; }
   }
 }
@@ -3559,6 +3566,12 @@ function setBig(text) {
   if (text !== '') { void b.offsetWidth; b.classList.add('pop'); }
 }
 
+// The coin is drawn in gold rather than using the 🪙 emoji, which looks different (or silver) on some computers
+function setItemIcon(el, icon) {
+  el.dataset.icon = icon;
+  if (icon === ITEMS.coin.icon) el.innerHTML = '<i class="coinIco"></i>'; else el.textContent = icon;
+}
+
 function flash(kind) {
   const f = $('flash');
   f.className = '';
@@ -3703,9 +3716,9 @@ function drawHud() {
     const icon = you.roll > 0 ? ITEMS[ITEM_KEYS[Math.floor(r.t * 13) % ITEM_KEYS.length]].icon : you.item ? ITEMS[you.item].icon : '';
     const key = icon + (you.roll > 0 ? 'r' : '') + you.uses;
     if (key !== r.itemShown) {
-      if (you.roll > 0 && icon !== $('itemIcon').textContent) sound.sfx('tick');
+      if (you.roll > 0 && icon !== $('itemIcon').dataset.icon) sound.sfx('tick');
       r.itemShown = key;
-      $('itemIcon').textContent = icon;
+      setItemIcon($('itemIcon'), icon);
       $('item').className = you.roll > 0 ? 'roll' : you.item ? 'has' : '';
       $('itemCount').textContent = you.item && you.roll <= 0 && you.uses > 1 ? '×' + you.uses : '';
       $('itemName').textContent = you.item && you.roll <= 0 ? ITEMS[you.item].name : '';
@@ -3715,9 +3728,9 @@ function drawHud() {
     const icon2 = you.roll2 > 0 ? ITEMS[ITEM_KEYS[(Math.floor(r.t * 13) + 3) % ITEM_KEYS.length]].icon : you.item2 ? ITEMS[you.item2].icon : '';
     const key2 = icon2 + (you.roll2 > 0 ? 'r' : '') + you.uses2;
     if (key2 !== r.item2Shown) {
-      if (you.roll2 > 0 && you.roll <= 0 && icon2 !== $('item2Icon').textContent) sound.sfx('tick');
+      if (you.roll2 > 0 && you.roll <= 0 && icon2 !== $('item2Icon').dataset.icon) sound.sfx('tick');
       r.item2Shown = key2;
-      $('item2Icon').textContent = icon2;
+      setItemIcon($('item2Icon'), icon2);
       $('item2').className = you.roll2 > 0 ? 'roll' : you.item2 ? 'has' : '';
       $('item2Count').textContent = you.item2 && you.roll2 <= 0 && you.uses2 > 1 ? '×' + you.uses2 : '';
     }
