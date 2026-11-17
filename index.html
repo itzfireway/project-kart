@@ -6,11 +6,15 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Project Kart</title>
+<!-- Every emoji is drawn with Google's Noto Color Emoji (the Android set) so they look the same on every device -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap">
 <style>
   :root { --bg: #12141c; --panel: rgba(18, 20, 28, .82); --line: rgba(255, 255, 255, .1); --text: #f2f3f7; --dim: #9aa0b1; --hot: #ffcf33; }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", "Noto Color Emoji", sans-serif; }
   canvas { position: fixed; inset: 0; display: block; cursor: grab; touch-action: none; }
   canvas:active { cursor: grabbing; }
   h1 { position: fixed; top: 20px; left: 24px; margin: 0; font-size: 26px; font-weight: 900; font-style: italic; letter-spacing: .02em; text-transform: uppercase; pointer-events: none; }
@@ -95,7 +99,7 @@
   .card .gpHead { margin: 4px 0 6px; font-weight: 800; font-style: italic; color: var(--hot); }
   #flash.bolt { background: rgba(235, 240, 255, .8); animation: fade .35s ease-out forwards; }
   #netRoomCode { flex: 1; align-self: center; font-size: 13px; color: var(--dim); }
-  #netRoomCode b { font-size: 22px; letter-spacing: 3px; color: inherit; font-family: ui-monospace, Menlo, monospace; margin-left: 4px; }
+  #netRoomCode b { font-size: 22px; letter-spacing: 3px; color: inherit; font-family: ui-monospace, Menlo, "Noto Color Emoji", monospace; margin-left: 4px; }
   .hostNote { margin: 4px 0 0; font-size: 12px; color: var(--dim); }
   /* Race polish: item slot, start lights, speed lines, hit flashes */
   #item { position: absolute; top: 14px; left: 50%; width: 84px; height: 84px; margin-left: -42px; display: flex; align-items: center; justify-content: center; font-size: 46px; font-style: normal; background: rgba(18, 20, 28, .6); border: 3px solid rgba(255, 255, 255, .45); border-radius: 18px; }
@@ -362,12 +366,15 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-17.4';
+const BUILD = '2026-11-17.5';
+// Fetch the emoji font's pieces for every emoji the game shows up front, so items never pop in as the device's own emoji first
+try { document.fonts.load('1em "Noto Color Emoji"', '⏱️☀️⚡⛈️❄️⭐🌃🌧️🌨️🌪️🌳🏆🏜️🐠💨💪🚀🛡️🛢️🥇🥈🥉🪙'); } catch (e) {}
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['17 Nov 2026', [
     'Freeze ❄️ now always hits the closest opponent, however far away they are',
+    'All emoji now look the same on every device (the Android style)',
     'The Coin 🪙 now looks like the gold phone coin on every device',
     'New item: Freeze ❄️ turns the closest kart into a block of ice for a moment',
     'New item: Coin 🪙 it does nothing at all',
@@ -571,7 +578,7 @@ function numberTexture(num, ink) {
   x.beginPath(); x.arc(64, 64, 62, 0, Math.PI * 2); x.fill();
   x.lineWidth = 8; x.strokeStyle = ink; x.stroke();
   x.fillStyle = '#14161d';
-  x.font = 'italic 900 78px system-ui, sans-serif';
+  x.font = 'italic 900 78px system-ui, "Noto Color Emoji", sans-serif';
   x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillText(String(num), 62, 68);
   const t = new THREE.CanvasTexture(c);
@@ -2010,7 +2017,7 @@ function buildWorld() {
     const banner = canvasTex(1024, 128, (x, W, H) => {
       x.fillStyle = '#d8261c'; x.fillRect(0, 0, W, H);
       for (let a = 0; a < 80; a++) for (let b = 0; b < 2; b++) { x.fillStyle = (a + b) % 2 ? '#fff' : '#15161a'; x.fillRect(a * W / 80, b * 12 + (H - 24) * (a % 1), W / 80, 12); x.fillRect(a * W / 80, H - 24 + b * 12, W / 80, 12); }
-      x.fillStyle = '#fff'; x.font = 'italic 900 78px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('PROJECT KART', W / 2, H / 2 + 3);
+      x.fillStyle = '#fff'; x.font = 'italic 900 78px system-ui, "Noto Color Emoji", sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('PROJECT KART', W / 2, H / 2 + 3);
     });
     banner.wrapS = banner.wrapT = THREE.ClampToEdgeWrapping;
     const beam = new THREE.Mesh(new THREE.BoxGeometry(HW * 2 + 4, 2.4, .7), [steel, steel, steel, steel, new THREE.MeshBasicMaterial({ map: banner }), new THREE.MeshBasicMaterial({ map: banner })]);
@@ -2817,7 +2824,7 @@ function buildBlocks(w) {
     g.addColorStop(0, '#ff5ad1'); g.addColorStop(.35, '#ffcf33'); g.addColorStop(.7, '#3fe0ff'); g.addColorStop(1, '#8a5bff');
     x.fillStyle = g; x.fillRect(0, 0, W, H);
     x.strokeStyle = 'rgba(255,255,255,.95)'; x.lineWidth = 9; x.strokeRect(7, 7, W - 14, H - 14);
-    x.font = '900 96px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = '900 96px system-ui, "Noto Color Emoji", sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
     x.lineWidth = 10; x.strokeStyle = 'rgba(20,22,29,.6)'; x.strokeText('?', W / 2, H / 2 + 6);
     x.fillStyle = '#fff'; x.fillText('?', W / 2, H / 2 + 6);
   });
@@ -3127,7 +3134,7 @@ function makeRacer(name, opts, isPlayer) {
 function addNameTag(k, name) {
   const c = document.createElement('canvas'), x = c.getContext('2d');
   c.width = 256; c.height = 64;
-  x.font = 'italic 900 34px system-ui, sans-serif';
+  x.font = 'italic 900 34px system-ui, "Noto Color Emoji", sans-serif';
   const w = Math.min(244, x.measureText(name).width + 34);
   x.fillStyle = 'rgba(18,20,28,.72)';
   x.beginPath(); x.roundRect ? x.roundRect(128 - w / 2, 8, w, 48, 24) : x.rect(128 - w / 2, 8, w, 48); x.fill();
@@ -3764,7 +3771,7 @@ function drawHud() {
     m.beginPath(); m.arc(mapX(k.x), mapY(k.z), k.isPlayer ? 5.5 : 4, 0, Math.PI * 2); m.fill(); m.stroke();
   }
   // Friends' names next to their dots, so you can always find them
-  m.font = `italic 800 ${TOUCH ? 16 : 12}px system-ui, sans-serif`; m.textBaseline = 'middle'; m.lineWidth = 3; m.strokeStyle = 'rgba(10,12,18,.85)'; m.fillStyle = '#fff';
+  m.font = `italic 800 ${TOUCH ? 16 : 12}px system-ui, "Noto Color Emoji", sans-serif`; m.textBaseline = 'middle'; m.lineWidth = 3; m.strokeStyle = 'rgba(10,12,18,.85)'; m.fillStyle = '#fff';
   for (const k of r.karts) {
     if (!k.tag) continue;
     const x = mapX(k.x), y = mapY(k.z), right = x < 130;
