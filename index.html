@@ -122,6 +122,7 @@
   #lines.star { opacity: .7; background: repeating-conic-gradient(from 0deg at 50% 58%, transparent 0deg 5deg, rgba(255, 220, 90, .6) 5deg 5.6deg); }
   #flash { position: absolute; inset: 0; opacity: 0; }
   #flash.hit { background: radial-gradient(circle, transparent 40%, rgba(255, 40, 30, .6)); animation: fade .6s ease-out forwards; }
+  #flash.freeze { background: radial-gradient(circle, rgba(200, 240, 255, .15) 30%, rgba(150, 215, 255, .75)); animation: fade 1.2s ease-out forwards; }
   #flash.zap { background: rgba(200, 230, 255, .75); animation: fade .5s ease-out forwards; }
   #flash.boom { background: radial-gradient(circle, rgba(255, 190, 60, .45), transparent 70%); animation: fade .4s ease-out forwards; }
   .card tr td:first-child { width: 2.2em; }
@@ -359,11 +360,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-17.1';
+const BUILD = '2026-11-17.2';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['17 Nov 2026', [
+    'New item: Freeze ❄️ turns the closest kart within 10m into a block of ice for a moment',
+    'New item: Coin 🪙 it does nothing at all',
     'Phones: Tilt steering fixed (it used to just turn left)',
   ]],
   ['16 Nov 2026', [
@@ -2786,7 +2789,11 @@ const ITEMS = {
   star: { icon: '⭐', name: 'Superstar', uses: 1 },
   zap: { icon: '⚡', name: 'Zap', uses: 1 },
   mega: { icon: '💪', name: 'Mega kart', uses: 1 },
+  freeze: { icon: '❄️', name: 'Freeze', uses: 1 },
+  coin: { icon: '🪙', name: 'Coin', uses: 1 },
 };
+// Freeze: turns the single closest kart within FREEZE_RANGE metres into a block of ice for a moment. A coin does nothing.
+const FREEZE_RANGE = 10, FREEZE_TIME = 2.5;
 // Mega kart: grow big and heavy for a while. Ram another kart to knock it aside and slow it down for a bit.
 const MEGA_TIME = 8, MEGA_SIZE = 1.7, SLOW_TIME = 2.5, SLOW_SPEED = .75;
 // How close (centre to centre) counts as a mega kart touching someone. Generous on purpose: a big kart is long, and
@@ -2797,6 +2804,7 @@ const ITEM_KEYS = Object.keys(ITEMS);
 const ITEM_ODDS = {
   turbo: p => 2 + 2 * p, triple: p => 3 * p * p, oil: p => 4.5 * (1 - p) + .4, rocket: p => .6 + 2.6 * p,
   shield: p => 3 * (1 - p) + .5, star: p => 2.4 * p * p * p, zap: p => p > .7 ? 1.6 * p : 0, mega: p => .7 + 1.8 * p,
+  freeze: p => .8 + 1.6 * p, coin: p => 1.5,
 };
 
 function buildBlocks(w) {
@@ -2836,7 +2844,9 @@ function buildFxKit() {
     rocket.add(fin);
   }
   rocket.traverse(o => { o.castShadow = true; });
-  return { oilGeo, oilMat, rocket, bubbleGeo: new THREE.SphereGeometry(1.75, 28, 18) };
+  const iceGeo = new THREE.BoxGeometry(2.7, 2, 3.5);
+  const iceMat = std({ color: 0xbfeaff, transparent: true, opacity: .55, roughness: .05, metalness: .1, emissive: 0x3a8fc0, emissiveIntensity: .35, depthWrite: false });
+  return { oilGeo, oilMat, rocket, bubbleGeo: new THREE.SphereGeometry(1.75, 28, 18), iceGeo, iceMat };
 }
 
 function rollItem(k) {
@@ -2876,8 +2886,12 @@ function useItem(k) {
     const order = ranking(), at = order.indexOf(k), target = at > 0 ? order[at - 1] : null;
     fire({ k: 'rocket', slot: k.slot, s: k.total + 3 / DS, lat: k.lat, target: target ? target.slot : -1 });
   } else if (kind === 'zap') fire({ k: 'zap', slot: k.slot });
+  else if (kind === 'freeze') {
+    const t = freezeTarget(k);
+    fire({ k: 'freeze', slot: k.slot, target: t ? t.slot : -1 });
+  } else if (kind === 'coin') burst(k.x, k.y + 1.6, k.z, 14, [1, .85, .2]);
   if (k.isPlayer) buzz(35);
-  if (k.isPlayer || near(k, 60)) sound.sfx(kind === 'triple' ? 'turbo' : kind, k.isPlayer ? 1 : .5);
+  if (kind !== 'freeze' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind, k.isPlayer ? 1 : .5);
 }
 
 const near = (k, d) => race && Math.abs(k.x - race.you.x) + Math.abs(k.z - race.you.z) < d;
@@ -2891,6 +2905,7 @@ function fire(e) {
 function spawnFx(e) {
   const owner = race.karts.find(k => k.slot === e.slot) || null, kit = world.kit;
   if (e.k === 'zap') { zapAll(owner); return; }
+  if (e.k === 'freeze') { freezeFx(owner, race.karts.find(k => k.slot === e.target) || null); return; }
   const fx = { k: e.k, owner, age: 0, x: e.x, y: 0, z: e.z, i: 0 };
   if (e.k === 'oil') {
     const n = nearestAny(e.x, e.z), l = locate(e.x, e.z, n.i, 8);
@@ -2922,6 +2937,32 @@ function zapAll(owner) {
   if (owner !== race.you) { flash('zap'); race.shake = .35; }
   sound.sfx('zap');
   race.rainT = ZAP_RAIN;
+}
+
+// The one kart closest to k, if any is within FREEZE_RANGE
+function freezeTarget(k) {
+  let best = null, bd = FREEZE_RANGE * FREEZE_RANGE;
+  for (const o of race.karts) {
+    if (o === k || o.finish !== null) continue;
+    const d = (o.x - k.x) ** 2 + (o.y - k.y) ** 2 + (o.z - k.z) ** 2;
+    if (d <= bd) { bd = d; best = o; }
+  }
+  return best;
+}
+function freezeFx(owner, k) {
+  if (owner) burst(owner.x, owner.y + 1, owner.z, 16, [.75, .92, 1]);
+  if (owner === race.you || (k && k.isPlayer) || (owner && near(owner, 60))) sound.sfx('freeze', owner === race.you || (k && k.isPlayer) ? 1 : .5);
+  if (!k) return;
+  burst(k.x, k.y + 1, k.z, 30, [.75, .92, 1]);
+  if (k.remote || k.starT > 0 || k.finish !== null) return; // each browser freezes only the karts it drives
+  if (k.shieldT > 0) {
+    k.shieldT = 0;
+    burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
+    if (k.isPlayer) sound.sfx('pop');
+    return;
+  }
+  k.freezeT = FREEZE_TIME; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0; k.trickB = 0;
+  if (k.isPlayer) { race.shake = .4; flash('freeze'); buzz([80, 40, 80]); }
 }
 
 // Spins a kart out. Returns false if a shield or superstar saved it.
@@ -3062,10 +3103,14 @@ function makeRacer(name, opts, isPlayer) {
   const bubble = new THREE.Mesh(world.kit.bubbleGeo, new THREE.MeshBasicMaterial({ color: 0x5ac8ff, transparent: true, opacity: .3, blending: THREE.AdditiveBlending, depthWrite: false }));
   bubble.position.y = .7; bubble.visible = false;
   view.group.add(bubble);
+  const ice = new THREE.Mesh(world.kit.iceGeo, world.kit.iceMat);
+  ice.position.y = .8; ice.visible = false;
+  view.group.add(ice);
   return {
+    ice,
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
-    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0, megaT: 0, megaS: 1, slowT: 0, knockCD: 0, kx: 0, kz: 0,
+    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [],
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: BODIES[opts.body].grass ?? .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
@@ -3278,6 +3323,7 @@ function thinkCPU(k, h) {
     if (it === 'oil') go = go && (karts.some(o => o !== k && gapTo(o) < -2 && gapTo(o) > -30) || k.itemWait < -6);
     if (it === 'rocket') go = go && (karts.some(o => o !== k && gapTo(o) > 6 && gapTo(o) < 140) || k.itemWait < -6);
     if (it === 'mega') go = go && (karts.some(o => o !== k && Math.abs(gapTo(o)) < 25) || k.itemWait < -6);
+    if (it === 'freeze') go = go && (!!freezeTarget(k) || k.itemWait < -10);
     if (go) { k.wantItem = true; k.itemWait = .5 + Math.random() * 1.2; }
   }
 }
@@ -3298,6 +3344,12 @@ function stepKart(k, h) {
     k.spinT = Math.max(0, k.spinT - h);
     k.throttle = k.brake = 0; k.wantSteer = 0; k.wantDrift = false; k.wantItem = false; k.drift = 0;
     k.v -= k.v * 2.4 * h;
+  }
+  // Frozen: stuck in a block of ice, sliding to a stop with no control
+  if (k.freezeT > 0) {
+    k.freezeT = Math.max(0, k.freezeT - h);
+    k.throttle = k.brake = 0; k.wantSteer = 0; k.wantDrift = false; k.wantItem = false; k.drift = 0;
+    k.v -= k.v * 3 * h;
   }
   k.starT = Math.max(0, k.starT - h); k.shieldT = Math.max(0, k.shieldT - h); k.zapT = Math.max(0, k.zapT - h);
   k.megaT = Math.max(0, k.megaT - h); k.slowT = Math.max(0, k.slowT - h); k.knockCD = Math.max(0, k.knockCD - h);
@@ -3733,6 +3785,10 @@ function renderKart(k, dt) {
     k.tag.material.opacity = 1 - smooth(260, 340, d);
     k.tag.visible = d < 340;
   }
+  k.ice.visible = k.freezeT > 0;
+  if (k.ice.visible) k.ice.material.opacity = k.freezeT < .6 && Math.sin(race.t * 30) > 0 ? .25 : .55;
+  if (k.wasFrozen && k.freezeT <= 0) { burst(k.x, k.y + 1, k.z, 26, [.8, .95, 1]); if (k.isPlayer) sound.sfx('pop'); }
+  k.wasFrozen = k.freezeT > 0;
   const b = k.bubble;
   b.visible = k.shieldT > 0 || k.starT > 0;
   if (b.visible) {
@@ -3959,6 +4015,8 @@ const sound = (() => {
     thud: v => { tone(160, .3, { type: 'sine', vol: .12 * v, slide: 50 }); hiss(.2, { vol: .14 * v, f0: 700, f1: 120, type: 'lowpass' }); },
     zap: v => { hiss(.5, { vol: .18 * v, f0: 4000, f1: 200 }); tone(1800, .5, { type: 'sawtooth', vol: .05 * v, slide: 80 }); },
     pop: v => tone(1400, .15, { type: 'sine', vol: .08 * v, slide: 300 }),
+    freeze: v => { hiss(.45, { vol: .14 * v, f0: 6000, f1: 1500 }); notes([1568, 2093, 2637], .05, { vol: .035 * v, type: 'sine' }); },
+    coin: v => { tone(988, .08, { vol: .05 * v, type: 'square' }); tone(1319, .25, { vol: .05 * v, type: 'square', at: .08 }); },
     bonk: v => { tone(420, .4, { vol: .07 * v, slide: 90 }); hiss(.25, { vol: .12 * v, f0: 900, f1: 200 }); },
     boom: v => { hiss(.6, { vol: .3 * v, f0: 1500, f1: 80, type: 'lowpass' }); tone(140, .4, { type: 'sine', vol: .12 * v, slide: 40 }); },
     lap: v => notes([784, 1047], .1, { vol: .05 * v, type: 'triangle' }),
@@ -4823,7 +4881,7 @@ function onHostData(conn, d) {
 }
 
 function cleanFx(e, slot) {
-  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap'].includes(e.k)) return null;
+  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze'].includes(e.k)) return null;
   const num = (v, lim) => clamp(Number.isFinite(+v) ? +v : 0, -lim, lim);
   return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 99)) };
 }
@@ -4927,9 +4985,9 @@ function netFinished(k) {
   else netToHost({ t: 'fin' });
 }
 
-const SNAP_LEN = 19;
+const SNAP_LEN = 20;
 function netSnapshot(k) {
-  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2)];
+  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2), round(k.freezeT, 2)];
 }
 function netStore(k, snap) {
   if (!k?.remote || !Array.isArray(snap) || snap.length !== SNAP_LEN || !snap.every(Number.isFinite)) return;
@@ -4960,7 +5018,7 @@ function netInterpolate() {
     k.v = mix(5); k.steer = mix(6); k.drift = b[7]; k.driftT = b[8]; k.driftIn = k.drift ? Math.min(1, k.driftIn + .04) : 0;
     k.boostT = b[9]; k.hopY = Math.max(0, mix(10)); k.pitch = mix(11); k.total = b[12];
     k.spinT = clamp(b[13], 0, SPIN); k.starT = clamp(b[14], 0, 10); k.shieldT = clamp(b[15], 0, 15);
-    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME);
+    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME); k.freezeT = clamp(b[19], 0, FREEZE_TIME);
     // A short gap in the connection: keep rolling rather than stop dead
     const late = clamp(when - list[list.length - 1].at, 0, COAST_MS) / 1000;
     if (i === list.length - 1 && late > 0) { k.x += Math.sin(k.yaw) * k.v * late; k.z += Math.cos(k.yaw) * k.v * late; }
