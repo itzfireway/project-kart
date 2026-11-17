@@ -359,10 +359,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-16.13';
+const BUILD = '2026-11-17.1';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
+  ['17 Nov 2026', [
+    'Phones: Tilt steering fixed (it used to just turn left)',
+  ]],
   ['16 Nov 2026', [
     'Coral Tunnel: no more sand poking into the tunnel where it dips down from the beach',
     'Phones: the map, your place and the lap counter can now be moved and resized in Move & resize controls',
@@ -4205,13 +4208,30 @@ for (const el of [steerPad, floatZone]) {
 }
 // Tilt: how far the screen's left-right line leans, worked out from the gravity direction so it doesn't matter
 // how far back you hold the phone. About 25 degrees is full lock.
+// The screen's "up" is worked out from the window shape and gravity itself, because some phones report the
+// wrong screen angle in landscape (that made the kart steer hard left all the time).
+let tiltUp = null, tiltSm = 0;
 addEventListener('deviceorientation', e => {
   if (ctl.style !== 'tilt' || e.beta == null || e.gamma == null) return;
   const b = e.beta * Math.PI / 180, g = e.gamma * Math.PI / 180;
-  const a = (screen.orientation ? screen.orientation.angle : window.orientation || 0) * Math.PI / 180;
+  // World "up" seen from the phone (x = right edge, y = top edge when held upright)
   const upX = -Math.cos(b) * Math.sin(g), upY = Math.sin(b);
-  const lean = upX * Math.cos(a) - upY * Math.sin(a);
-  touch.steer = Math.sign(lean) * clamp((Math.abs(lean) - .04) / .38, 0, 1);
+  const land = innerWidth > innerHeight;
+  let a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+  a = ((Math.round(a / 90) * 90) % 360 + 360) % 360;
+  // Use the reported angle only if it matches the window shape. Otherwise, in landscape, the side that points
+  // up is the one gravity says (kept once picked so steering hard doesn't flip it)
+  if (land !== (a === 90 || a === 270)) {
+    if (!land) a = 0;
+    else if ((tiltUp === 90 && upX > -.3) || (tiltUp === 270 && upX < .3)) a = tiltUp;
+    else a = upX >= 0 ? 90 : 270;
+  }
+  tiltUp = a;
+  const r = a * Math.PI / 180;
+  const lean = upX * Math.cos(r) - upY * Math.sin(r);
+  const want = Math.sign(lean) * clamp((Math.abs(lean) - .04) / .38, 0, 1);
+  tiltSm += (want - tiltSm) * .5;
+  touch.steer = Math.abs(tiltSm) < .01 ? 0 : tiltSm;
 });
 function setSteerStyle(style) {
   releaseTouch();
