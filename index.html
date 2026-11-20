@@ -362,10 +362,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-17.8';
+const BUILD = '2026-11-20.1';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
+  ['20 Nov 2026', [
+    'Coral Tunnel: the grated floor before each tunnel is solid, and there is sand under it and beside the rail, so you can\'t fall through',
+  ]],
   ['17 Nov 2026', [
     'Freeze ❄️ now always hits the closest opponent, however far away they are',
     'The Coin 🪙 now looks like the gold phone coin on every device',
@@ -1679,6 +1682,8 @@ function groundAt(x, z) {
 function surfaceY(x, z, i, lat) {
   // In and around the glass tunnel the walkway either side of the road is solid, right out to the glass
   if (TUBE[i] && Math.abs(lat) <= TUBE_R - .2) return cy[i];
+  // and out past the walkway before each mouth you can't drop below the road
+  if (TUBE[i] === 2) return Math.max(cy[i], groundAt(x, z));
   return Math.abs(lat) <= HW + .5 ? cy[i] : groundAt(x, z);
 }
 
@@ -1798,13 +1803,21 @@ function buildWorld() {
     if (TUBE[near.i] === 1) { rise0 = TUBE_R + 1.5; rise1 = TUBE_R + 30; }
     let h = base + (naturalHeight(x, z) - base) * smooth(rise0, rise1, near.d);
     if (near.d < HW + 1.5) h -= .28;
-    // The tunnel road climbs and dives steeply, so keep the sand well under it (the walkway covers the gap)
-    if (TUBE[near.i] && near.d < TUBE_R - .8) h -= .5 + Math.abs(cy[wrapI(near.i + 4)] - cy[wrapI(near.i - 4)]) / (8 * DS) * 5;
+    // The tunnel road climbs and dives steeply, so keep the sand well under it inside the glass (the walkway covers the gap)
+    if (TUBE[near.i] === 1 && near.d < TUBE_R - .8) h -= .5 + Math.abs(cy[wrapI(near.i + 4)] - cy[wrapI(near.i - 4)]) / (8 * DS) * 5;
+    // Out in the open before each mouth the sand is filled in right up under the grated walkway and out past the rail,
+    // so there's no hole under the grate or beside it
+    if (TUBE[near.i] === 2) {
+      const lim = (x - cx[near.i]) * nxOf(near.i) + (z - cz[near.i]) * nzOf(near.i) >= 0 ? LIM_L[near.i] : LIM_R[near.i];
+      const bend = Math.abs(cy[wrapI(near.i + 4)] + cy[wrapI(near.i - 4)] - 2 * cy[near.i]), fill = cy[near.i] - .3 - bend * 1.5;
+      // then a wide sand bank sloping gently down from the rail, so there's no water showing beside it
+      if (near.d < TUBE_R + 1) h = fill; else h = Math.max(h, fill - Math.max(0, near.d - Math.max(TUBE_R, lim) - 8) * .22);
+    }
     // No sand inside the glass: out to a grid square past the glass, the ground stays below the tunnel floor
     // (the ground is a 3m grid, so without this a slope outside the tunnel leans in through the glass)
     if (TUBE[near.i]) {
       const l = locate(x, z, near.i, 8);
-      if (TUBE[l.i] && l.d < TUBE_R + CELL + 1) h = Math.min(h, cy[l.i] - .6 - Math.abs(cy[wrapI(l.i + 3)] - cy[wrapI(l.i - 3)]) * 1.5);
+      if (TUBE[l.i] === 1 && l.d < TUBE_R + CELL + 1) h = Math.min(h, cy[l.i] - .6 - Math.abs(cy[wrapI(l.i + 3)] - cy[wrapI(l.i - 3)]) * 1.5);
     }
     GROUND[i] = h;
     p.setY(i, h);
