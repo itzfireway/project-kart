@@ -123,6 +123,7 @@
   #lines.on { opacity: .5; }
   #lines.star { opacity: .7; background: repeating-conic-gradient(from 0deg at 50% 58%, transparent 0deg 5deg, rgba(255, 220, 90, .6) 5deg 5.6deg); }
   #flash { position: absolute; inset: 0; opacity: 0; }
+  #ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0; }
   #flash.hit { background: radial-gradient(circle, transparent 40%, rgba(255, 40, 30, .6)); animation: fade .6s ease-out forwards; }
   #flash.freeze { background: radial-gradient(circle, rgba(200, 240, 255, .15) 30%, rgba(150, 215, 255, .75)); animation: fade 1.2s ease-out forwards; }
   #flash.zap { background: rgba(200, 230, 255, .75); animation: fade .5s ease-out forwards; }
@@ -312,6 +313,7 @@
 <div id="hud">
   <div id="lines"></div>
   <div id="flash"></div>
+  <canvas id="ink"></canvas>
   <div id="lights" hidden><i></i><i></i><i></i></div>
   <div id="item" hidden><span id="itemIcon"></span><small id="itemCount"></small><span id="itemName"></span></div>
   <div id="item2" hidden><span id="item2Icon"></span><small id="item2Count"></small></div>
@@ -362,10 +364,14 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-20.1';
+const BUILD = '2026-11-21.1';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
+  ['21 Nov 2026', [
+    'New item: Steal 🧲 takes an item from the closest racer',
+    'New item: Ink 🦑 splats ink over everyone else\'s screen for 5 seconds',
+  ]],
   ['20 Nov 2026', [
     'Coral Tunnel: the grated floor before each tunnel is solid, and there is sand under it and beside the rail, so you can\'t fall through',
   ]],
@@ -2808,7 +2814,11 @@ const ITEMS = {
   mega: { icon: '💪', name: 'Mega kart', uses: 1 },
   freeze: { icon: '❄️', name: 'Freeze', uses: 1 },
   coin: { icon: '🪙', name: 'Coin', uses: 1 },
+  steal: { icon: '🧲', name: 'Steal', uses: 1 },
+  ink: { icon: '🦑', name: 'Ink', uses: 1 },
 };
+// Steal: takes one item from the closest opponent. Ink: splats ink over everyone else's screen for INK_TIME seconds.
+const INK_TIME = 5;
 // Freeze: turns the single closest opponent (however far away) into a block of ice for a moment. A coin does nothing.
 const FREEZE_TIME = 2.5;
 // Mega kart: grow big and heavy for a while. Ram another kart to knock it aside and slow it down for a bit.
@@ -2821,7 +2831,7 @@ const ITEM_KEYS = Object.keys(ITEMS);
 const ITEM_ODDS = {
   turbo: p => 2 + 2 * p, triple: p => 3 * p * p, oil: p => 4.5 * (1 - p) + .4, rocket: p => .6 + 2.6 * p,
   shield: p => 3 * (1 - p) + .5, star: p => 2.4 * p * p * p, zap: p => p > .7 ? 1.6 * p : 0, mega: p => .7 + 1.8 * p,
-  freeze: p => .8 + 1.6 * p, coin: p => 1.5,
+  freeze: p => .8 + 1.6 * p, coin: p => 1.5, steal: p => .9 + 1.4 * p, ink: p => .6 + 1.6 * p,
 };
 
 function buildBlocks(w) {
@@ -2906,9 +2916,13 @@ function useItem(k) {
   else if (kind === 'freeze') {
     const t = freezeTarget(k);
     fire({ k: 'freeze', slot: k.slot, target: t ? t.slot : -1 });
-  } else if (kind === 'coin') burst(k.x, k.y + 1.6, k.z, 14, [1, .85, .2]);
+  } else if (kind === 'steal') {
+    const t = freezeTarget(k);
+    fire({ k: 'steal', slot: k.slot, target: t ? t.slot : -1 });
+  } else if (kind === 'ink') fire({ k: 'ink', slot: k.slot });
+  else if (kind === 'coin') burst(k.x, k.y + 1.6, k.z, 14, [1, .85, .2]);
   if (k.isPlayer) buzz(35);
-  if (kind !== 'freeze' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind, k.isPlayer ? 1 : .5);
+  if (kind !== 'freeze' && kind !== 'steal' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind, k.isPlayer ? 1 : .5);
 }
 
 const near = (k, d) => race && Math.abs(k.x - race.you.x) + Math.abs(k.z - race.you.z) < d;
@@ -2923,6 +2937,9 @@ function spawnFx(e) {
   const owner = race.karts.find(k => k.slot === e.slot) || null, kit = world.kit;
   if (e.k === 'zap') { zapAll(owner); return; }
   if (e.k === 'freeze') { freezeFx(owner, race.karts.find(k => k.slot === e.target) || null); return; }
+  if (e.k === 'steal') { stealFx(owner, race.karts.find(k => k.slot === e.target) || null); return; }
+  if (e.k === 'stolen') { stolenFx(owner, race.karts.find(k => k.slot === e.target) || null, e.item, e.uses); return; }
+  if (e.k === 'ink') { inkAll(owner); return; }
   const fx = { k: e.k, owner, age: 0, x: e.x, y: 0, z: e.z, i: 0 };
   if (e.k === 'oil') {
     const n = nearestAny(e.x, e.z), l = locate(e.x, e.z, n.i, 8);
@@ -2980,6 +2997,72 @@ function freezeFx(owner, k) {
   }
   k.freezeT = FREEZE_TIME; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0; k.trickB = 0;
   if (k.isPlayer) { race.shake = .4; flash('freeze'); buzz([80, 40, 80]); }
+}
+
+// Steal: the browser that drives the victim takes its item (the one it would use next) and announces who got it.
+// A shield blocks it, a superstar is immune, and if the victim has nothing there's nothing to take.
+function stealFx(owner, k) {
+  if (owner) burst(owner.x, owner.y + 1, owner.z, 14, [.95, .3, .35]);
+  const loud = owner === race.you || (k && k.isPlayer);
+  if (loud || (owner && near(owner, 60))) sound.sfx('steal', loud ? 1 : .5);
+  if (!k || !owner || k.remote || k.finish !== null || k.starT > 0) return;
+  if (k.shieldT > 0) {
+    k.shieldT = 0;
+    burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
+    if (k.isPlayer) sound.sfx('pop');
+    return;
+  }
+  let item = null, uses = 0;
+  if (k.item && k.roll <= 0) { item = k.item; uses = k.uses; k.item = null; k.uses = 0; }
+  else if (k.item2 && k.roll2 <= 0) { item = k.item2; uses = k.uses2; k.item2 = null; k.uses2 = 0; }
+  if (!item) return;
+  burst(k.x, k.y + 1.4, k.z, 22, [.95, .3, .35]);
+  if (k.isPlayer) { race.shake = .3; flash('hit'); buzz([50, 30, 50]); }
+  fire({ k: 'stolen', slot: k.slot, target: owner.slot, item: ITEM_KEYS.indexOf(item), uses });
+}
+// The item from a steal lands with the thief (in whichever slot is free; lost if both are full)
+function stolenFx(victim, k, item, uses) {
+  const id = ITEM_KEYS[item];
+  if (!k || !id) return;
+  burst(k.x, k.y + 1.6, k.z, 16, [1, .85, .2]);
+  if (k.remote || k.finish !== null) return;
+  uses = clamp(Math.round(uses) || 1, 1, ITEMS[id].uses);
+  if (!k.item) { k.item = id; k.uses = uses; k.roll = 0; k.itemWait = .6 + Math.random() * 1.5; }
+  else if (!k.item2) { k.item2 = id; k.uses2 = uses; k.roll2 = 0; }
+  else return;
+  if (k.isPlayer) sound.sfx('got');
+}
+// Ink: every kart but the one that used it gets ink splattered over its view for a few seconds
+function inkAll(owner) {
+  if (owner) burst(owner.x, owner.y + 1.5, owner.z, 26, [.12, .08, .2]);
+  sound.sfx('ink', owner === race.you ? .7 : 1);
+  for (const k of race.karts) {
+    if (k === owner || k.remote || k.finish !== null) continue;
+    k.inkT = INK_TIME;
+    if (k.isPlayer) { splatInk(); buzz([40, 30, 40, 30, 60]); }
+  }
+}
+// Draws big random ink blobs over the screen. They cover most of it, with a few small gaps to peek through.
+function splatInk() {
+  const c = $('ink'), W = c.width = Math.round(innerWidth / 2), H = c.height = Math.round(innerHeight / 2), x = c.getContext('2d');
+  x.clearRect(0, 0, W, H);
+  const blob = (bx, by, r, col) => {
+    x.fillStyle = col;
+    x.beginPath(); x.arc(bx, by, r, 0, 7); x.fill();
+    const drops = 7 + Math.random() * 8;
+    for (let i = 0; i < drops; i++) {
+      const a = Math.random() * 7, d = r * (.8 + Math.random() * .9), dr = r * (.08 + Math.random() * .22);
+      x.beginPath(); x.arc(bx + Math.cos(a) * d, by + Math.sin(a) * d, dr, 0, 7); x.fill();
+      x.lineWidth = dr * .9; x.lineCap = 'round';
+      x.beginPath(); x.moveTo(bx + Math.cos(a) * r * .6, by + Math.sin(a) * r * .6); x.lineTo(bx + Math.cos(a) * d, by + Math.sin(a) * d); x.strokeStyle = col; x.stroke();
+    }
+  };
+  const S = Math.min(W, H);
+  for (let i = 0; i < 9; i++) blob(W * (.1 + Math.random() * .8), H * (.12 + Math.random() * .76), S * (.18 + Math.random() * .16), i % 3 ? '#14101c' : '#231733');
+  blob(W * .5, H * .55, S * .34, '#0d0a12');
+  // a few glossy highlights so it reads as wet ink
+  x.fillStyle = 'rgba(255,255,255,.08)';
+  for (let i = 0; i < 6; i++) { x.beginPath(); x.ellipse(W * Math.random(), H * Math.random(), S * .05, S * .025, Math.random() * 3, 0, 7); x.fill(); }
 }
 
 // Spins a kart out. Returns false if a shield or superstar saved it.
@@ -3127,7 +3210,7 @@ function makeRacer(name, opts, isPlayer) {
     ice,
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
-    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
+    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, inkT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [],
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: BODIES[opts.body].grass ?? .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
@@ -3250,6 +3333,7 @@ function leaveRace() {
     race = null;
   }
   sound.stop();
+  $('ink').style.opacity = 0;
   document.body.classList.remove('racing');
   $('overlay').className = '';
   $('big').textContent = '';
@@ -3302,9 +3386,11 @@ function thinkCPU(k, h) {
   const lat = clamp(lane * .75 + clamp(kap[j] * 240, -5, 5), -HW + 1.8, HW - 1.8);
   const gx = cx[j] + nxOf(j) * lat, gz = cz[j] + nzOf(j) * lat, vm = vmax[k.idx];
   k.wantSteer = clamp(wrapA(Math.atan2(gx - k.x, gz - k.z) - k.yaw) * 2.6, -1, 1);
+  // Inked CPUs can't see well either: they wobble about and ease off a little
+  if (k.inkT > 0) k.wantSteer = clamp(k.wantSteer * .6 + Math.sin(race.t * 2.3 + k.slot * 1.7) * .55, -1, 1);
   // Rubber banding keeps the pack close: a little quicker behind you, a little slower ahead of you
   k.rubber = you.ai ? 1 : 1 + clamp((you.total - k.total) * DS / 320, -.07, .09);
-  const want = Math.min(vm, 60) * Math.min(1.05, k.topMul * k.rubber + .06) * (k.padT > 0 ? PAD_SPEED : 1) * (k.trickB > 0 ? TRICK_SPEED : 1);
+  const want = Math.min(vm, 60) * Math.min(1.05, k.topMul * k.rubber + .06) * (k.padT > 0 ? PAD_SPEED : 1) * (k.trickB > 0 ? TRICK_SPEED : 1) * (k.inkT > 0 ? .85 : 1);
   k.throttle = k.v < want ? 1 : 0;
   k.brake = k.v > want + 2.5 ? 1 : 0;
 
@@ -3368,7 +3454,7 @@ function stepKart(k, h) {
     k.v -= k.v * 3 * h;
   }
   k.starT = Math.max(0, k.starT - h); k.shieldT = Math.max(0, k.shieldT - h); k.zapT = Math.max(0, k.zapT - h);
-  k.megaT = Math.max(0, k.megaT - h); k.slowT = Math.max(0, k.slowT - h); k.knockCD = Math.max(0, k.knockCD - h);
+  k.megaT = Math.max(0, k.megaT - h); k.slowT = Math.max(0, k.slowT - h); k.inkT = Math.max(0, (k.inkT || 0) - h); k.knockCD = Math.max(0, k.knockCD - h);
   if (k.roll > 0 && (k.roll -= h) <= 0 && k.isPlayer) sound.sfx('got');
   if (k.roll2 > 0 && (k.roll2 -= h) <= 0 && k.isPlayer) sound.sfx('got');
   shiftItems(k);
@@ -3744,6 +3830,9 @@ function drawHud() {
       $('item2Count').textContent = you.item2 && you.roll2 <= 0 && you.uses2 > 1 ? '×' + you.uses2 : '';
     }
   }
+  // Ink stays solid, then fades out over the last second
+  const ink = you.inkT > 0 && !r.over ? Math.min(1, you.inkT / 1.2) * .97 : 0;
+  if ($('ink').style.opacity !== String(ink)) $('ink').style.opacity = ink;
   const lines = you.starT > 0 ? 'star' : you.boostT > 0 || you.padT > 0 || you.trickB > 0 ? 'on' : '';
   if ($('lines').className !== lines) $('lines').className = lines;
   $('clock').textContent = fmtTime(you.finish ?? r.t);
@@ -4038,6 +4127,8 @@ const sound = (() => {
     zap: v => { hiss(.5, { vol: .18 * v, f0: 4000, f1: 200 }); tone(1800, .5, { type: 'sawtooth', vol: .05 * v, slide: 80 }); },
     pop: v => tone(1400, .15, { type: 'sine', vol: .08 * v, slide: 300 }),
     freeze: v => { hiss(.45, { vol: .14 * v, f0: 6000, f1: 1500 }); notes([1568, 2093, 2637], .05, { vol: .035 * v, type: 'sine' }); },
+    steal: v => { tone(600, .25, { type: 'square', vol: .04 * v, slide: 1500 }); hiss(.25, { vol: .08 * v, f0: 1200, f1: 3500 }); },
+    ink: v => { hiss(.5, { vol: .2 * v, f0: 900, f1: 120, type: 'lowpass' }); tone(220, .3, { type: 'sine', vol: .08 * v, slide: 70 }); },
     coin: v => { tone(988, .08, { vol: .05 * v, type: 'square' }); tone(1319, .25, { vol: .05 * v, type: 'square', at: .08 }); },
     bonk: v => { tone(420, .4, { vol: .07 * v, slide: 90 }); hiss(.25, { vol: .12 * v, f0: 900, f1: 200 }); },
     boom: v => { hiss(.6, { vol: .3 * v, f0: 1500, f1: 80, type: 'lowpass' }); tone(140, .4, { type: 'sine', vol: .12 * v, slide: 40 }); },
@@ -4903,9 +4994,9 @@ function onHostData(conn, d) {
 }
 
 function cleanFx(e, slot) {
-  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze'].includes(e.k)) return null;
+  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze', 'steal', 'stolen', 'ink'].includes(e.k)) return null;
   const num = (v, lim) => clamp(Number.isFinite(+v) ? +v : 0, -lim, lim);
-  return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 99)) };
+  return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 99)), item: Math.round(num(e.item ?? -1, 99)), uses: Math.round(num(e.uses ?? 1, 9)) };
 }
 function netFx(e) {
   if (net.host) netBroadcast({ t: 'fx', e }); else netToHost({ t: 'fx', e });
