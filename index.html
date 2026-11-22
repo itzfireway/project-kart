@@ -366,11 +366,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-22.3';
+const BUILD = '2026-11-22.4';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['22 Nov 2026', [
+    'New item: Ghost mode 👻 makes you see-through for 5 seconds: karts and items pass right through you',
+    'New item: Coin bag 💰 holds 3 coins (3 bonus points in a Grand Prix)',
     'Ink 🦑 now only splats racers who are ahead of you in the race, not the ones behind',
     'Grand Prix: using a Coin 🪙 now gives you 1 bonus point in the cup (CPUs and friends too)',
     'Rocket start: press go just as the last red light comes on for a big boost off the line (on a phone, hold Drift). Too early and your engine stalls!',
@@ -2824,7 +2826,12 @@ const ITEMS = {
   coin: { icon: '🪙', name: 'Coin', uses: 1 },
   steal: { icon: '🧲', name: 'Steal', uses: 1 },
   ink: { icon: '🦑', name: 'Ink', uses: 1 },
+  phase: { icon: '👻', name: 'Ghost mode', uses: 1 },
+  coinbag: { icon: '💰', name: 'Coin bag', uses: 3 },
 };
+// Ghost mode: see-through for PHASE_TIME seconds. Karts drive through you and no item can touch you.
+// Coin bag: three coins, used one at a time like a triple turbo.
+const PHASE_TIME = 5;
 // Steal: takes one item from the closest opponent. Ink: splats ink over the screens of everyone ahead of you for INK_TIME seconds.
 const INK_TIME = 5;
 // Freeze: turns the single closest opponent (however far away) into a block of ice for a moment. A coin does nothing in a single race, but in a Grand Prix it's worth 1 bonus point.
@@ -2840,6 +2847,7 @@ const ITEM_ODDS = {
   turbo: p => 2 + 2 * p, triple: p => 3 * p * p, oil: p => 4.5 * (1 - p) + .4, rocket: p => .6 + 2.6 * p,
   shield: p => 3 * (1 - p) + .5, star: p => 2.4 * p * p * p, zap: p => p > .7 ? 1.6 * p : 0, mega: p => .7 + 1.8 * p,
   freeze: p => .8 + 1.6 * p, coin: p => 1.5, steal: p => .9 + 1.4 * p, ink: p => .6 + 1.6 * p,
+  phase: p => .8 + 1.2 * p, coinbag: p => .6,
 };
 
 function buildBlocks(w) {
@@ -2928,9 +2936,10 @@ function useItem(k) {
     const t = freezeTarget(k);
     fire({ k: 'steal', slot: k.slot, target: t ? t.slot : -1 });
   } else if (kind === 'ink') fire({ k: 'ink', slot: k.slot, s: k.total });   // s: how far round you were, so only karts ahead get inked
-  else if (kind === 'coin') fire({ k: 'coin', slot: k.slot });
+  else if (kind === 'coin' || kind === 'coinbag') fire({ k: 'coin', slot: k.slot });
+  else if (kind === 'phase') { k.phaseT = PHASE_TIME; burst(k.x, k.y + 1, k.z, 22, [.85, .9, 1]); }
   if (k.isPlayer) buzz(35);
-  if (kind !== 'freeze' && kind !== 'steal' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind, k.isPlayer ? 1 : .5);
+  if (kind !== 'freeze' && kind !== 'steal' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind === 'coinbag' ? 'coin' : kind, k.isPlayer ? 1 : .5);
 }
 
 const near = (k, d) => race && Math.abs(k.x - race.you.x) + Math.abs(k.z - race.you.z) < d;
@@ -3000,7 +3009,7 @@ function zapAll(owner) {
 function freezeTarget(k) {
   let best = null, bd = Infinity;
   for (const o of race.karts) {
-    if (o === k || o.finish !== null) continue;
+    if (o === k || o.finish !== null || o.phaseT > 0) continue;
     const d = (o.x - k.x) ** 2 + (o.y - k.y) ** 2 + (o.z - k.z) ** 2;
     if (d <= bd) { bd = d; best = o; }
   }
@@ -3011,7 +3020,7 @@ function freezeFx(owner, k) {
   if (owner === race.you || (k && k.isPlayer) || (owner && near(owner, 60))) sound.sfx('freeze', owner === race.you || (k && k.isPlayer) ? 1 : .5);
   if (!k) return;
   burst(k.x, k.y + 1, k.z, 30, [.75, .92, 1]);
-  if (k.remote || k.starT > 0 || k.finish !== null) return; // each browser freezes only the karts it drives
+  if (k.remote || k.starT > 0 || k.phaseT > 0 || k.finish !== null) return; // each browser freezes only the karts it drives
   if (k.shieldT > 0) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
@@ -3028,7 +3037,7 @@ function stealFx(owner, k) {
   if (owner) burst(owner.x, owner.y + 1, owner.z, 14, [.95, .3, .35]);
   const loud = owner === race.you || (k && k.isPlayer);
   if (loud || (owner && near(owner, 60))) sound.sfx('steal', loud ? 1 : .5);
-  if (!k || !owner || k.remote || k.finish !== null || k.starT > 0) return;
+  if (!k || !owner || k.remote || k.finish !== null || k.starT > 0 || k.phaseT > 0) return;
   if (k.shieldT > 0) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
@@ -3062,7 +3071,7 @@ function inkAll(owner, from) {
   sound.sfx('ink', owner === race.you ? .7 : 1);
   const s = Number.isFinite(from) ? from : owner ? owner.total : -Infinity;
   for (const k of race.karts) {
-    if (k === owner || k.remote || k.finish !== null || k.total <= s) continue;
+    if (k === owner || k.remote || k.finish !== null || k.total <= s || k.phaseT > 0) continue;
     k.inkT = INK_TIME;
     if (k.isPlayer) { splatInk(); buzz([40, 30, 40, 30, 60]); }
   }
@@ -3092,7 +3101,7 @@ function splatInk() {
 
 // Spins a kart out. Returns false if a shield or superstar saved it.
 function hit(k) {
-  if (k.starT > 0 || k.spinT > 0) return false;
+  if (k.starT > 0 || k.spinT > 0 || k.phaseT > 0) return false;
   if (k.shieldT > 0) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
@@ -3162,7 +3171,7 @@ function stepFx(h) {
       placeRocket(f);
     }
     if (!gone) for (const k of race.karts) {
-      if (k === f.owner && (f.k === 'rocket' || f.age < 1.2)) continue;
+      if (k === f.owner && (f.k === 'rocket' || f.age < 1.2) || k.phaseT > 0) continue;
       const dx = k.x - f.x, dz = k.z - f.z;
       if (dx * dx + dz * dz > (f.k === 'rocket' ? 5.8 : 4.6)) continue;
       if (!k.remote) hit(k);
@@ -3235,7 +3244,7 @@ function makeRacer(name, opts, isPlayer) {
     ice,
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
-    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, inkT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
+    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, phaseT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, inkT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [], stallT: 0, gasFrom: null,
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: BODIES[opts.body].grass ?? .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
@@ -3458,6 +3467,8 @@ function thinkCPU(k, h) {
     if (it === 'rocket') go = go && (karts.some(o => o !== k && gapTo(o) > 6 && gapTo(o) < 140) || k.itemWait < -6);
     if (it === 'ink') go = go && karts.some(o => o !== k && o.finish === null && o.total > k.total);   // in the lead, keep it until someone passes
     if (it === 'mega') go = go && (karts.some(o => o !== k && Math.abs(gapTo(o)) < 25) || k.itemWait < -6);
+    // Ghost mode: when a rocket is coming, or a superstar or mega kart is close by
+    if (it === 'phase') go = go && (race.fx.some(f => f.k === 'rocket' && f.target === k) || karts.some(o => o !== k && (o.starT > 0 || o.megaT > 0) && Math.abs(gapTo(o)) < 30) || k.itemWait < -6);
     if (go) { k.wantItem = true; k.itemWait = .5 + Math.random() * 1.2; }
   }
 }
@@ -3488,7 +3499,7 @@ function stepKart(k, h) {
   // Stalled at the start after pressing go too early: no gas for a moment
   if (k.stallT > 0) { k.stallT = Math.max(0, k.stallT - h); k.throttle = 0; }
   k.starT = Math.max(0, k.starT - h); k.shieldT = Math.max(0, k.shieldT - h); k.zapT = Math.max(0, k.zapT - h);
-  k.megaT = Math.max(0, k.megaT - h); k.slowT = Math.max(0, k.slowT - h); k.inkT = Math.max(0, (k.inkT || 0) - h); k.knockCD = Math.max(0, k.knockCD - h);
+  k.megaT = Math.max(0, k.megaT - h); k.phaseT = Math.max(0, (k.phaseT || 0) - h); k.slowT = Math.max(0, k.slowT - h); k.inkT = Math.max(0, (k.inkT || 0) - h); k.knockCD = Math.max(0, k.knockCD - h);
   if (k.roll > 0 && (k.roll -= h) <= 0 && k.isPlayer) sound.sfx('got');
   if (k.roll2 > 0 && (k.roll2 -= h) <= 0 && k.isPlayer) sound.sfx('got');
   shiftItems(k);
@@ -3614,7 +3625,7 @@ function bumpKarts(h) {
     const a = list[i], b = list[j], dx = b.x - a.x, dz = b.z - a.z, d2 = dx * dx + dz * dz;
     // Mega karts are wider and much heavier, so they push everyone else aside
     const ra = a.megaT > 0 ? 1.35 * MEGA_SIZE : 1.35, rb = b.megaT > 0 ? 1.35 * MEGA_SIZE : 1.35, rr = ra + rb;
-    if (d2 === 0) continue;
+    if (d2 === 0 || a.phaseT > 0 || b.phaseT > 0) continue;   // ghosts drive right through
     // A mega kart knocks whoever it touches (each browser only decides this for the karts it drives)
     if ((a.megaT > 0) !== (b.megaT > 0) && d2 < MEGA_REACH * MEGA_REACH) {
       const d = Math.sqrt(d2), nx = dx / d, nz = dz / d;
@@ -4021,6 +4032,22 @@ function drawHud() {
   }
 }
 
+// Fades a kart's own body (not its shield bubble or ice block) in or out
+function setKartAlpha(k, a) {
+  if (!k.alphaMats) {
+    k.alphaMats = [];
+    k.view.group.traverse(o => {
+      if (!o.material || o === k.bubble || o === k.ice) return;
+      for (const m of [].concat(o.material)) if (!k.alphaMats.some(x => x.m === m)) k.alphaMats.push({ m, t: m.transparent, o: m.opacity, d: m.depthWrite });
+    });
+  }
+  for (const x of k.alphaMats) {
+    const see = a < 1;
+    if (x.m.transparent !== (see || x.t)) { x.m.transparent = see || x.t; x.m.needsUpdate = true; }
+    x.m.opacity = see ? x.o * a : x.o; x.m.depthWrite = see ? false : x.d;
+  }
+  k.shownAlpha = a;
+}
 function renderKart(k, dt) {
   const g = k.view.group;
   k.slip += ((k.drift ? (k.drift * .28 + k.steer * .14) * smooth(0, 1, k.driftIn) : 0) - k.slip) * Math.min(1, dt * 10);
@@ -4042,6 +4069,9 @@ function renderKart(k, dt) {
     k.tag.material.opacity = 1 - smooth(260, 340, d);
     k.tag.visible = d < 340;
   }
+  // Ghost mode: see-through, flickering in the last second
+  const ghostly = k.phaseT > 0 ? (k.phaseT < 1 && Math.sin(race.t * 26) > 0 ? .65 : .28) : 1;
+  if (ghostly !== k.shownAlpha) setKartAlpha(k, ghostly);
   k.ice.visible = k.freezeT > 0;
   if (k.ice.visible) k.ice.material.opacity = k.freezeT < .6 && Math.sin(race.t * 30) > 0 ? .25 : .55;
   if (k.wasFrozen && k.freezeT <= 0) { burst(k.x, k.y + 1, k.z, 26, [.8, .95, 1]); if (k.isPlayer) sound.sfx('pop'); }
@@ -4269,6 +4299,7 @@ const sound = (() => {
     rocket: v => { hiss(.5, { vol: .12 * v, f0: 2000, f1: 500 }); tone(300, .4, { type: 'sawtooth', vol: .03 * v, slide: 900 }); },
     shield: v => tone(400, .35, { type: 'sine', vol: .08 * v, slide: 1200 }),
     star: v => notes([784, 988, 1175, 1568], .06, { vol: .045 * v, type: 'triangle' }),
+    phase: v => notes([880, 660, 494, 370], .11, { vol: .045 * v, type: 'sine' }),
     mega: v => notes([196, 262, 330, 392, 523], .07, { vol: .05 * v, type: 'square' }),
     thud: v => { tone(160, .3, { type: 'sine', vol: .12 * v, slide: 50 }); hiss(.2, { vol: .14 * v, f0: 700, f1: 120, type: 'lowpass' }); },
     zap: v => { hiss(.5, { vol: .18 * v, f0: 4000, f1: 200 }); tone(1800, .5, { type: 'sawtooth', vol: .05 * v, slide: 80 }); },
@@ -5246,9 +5277,9 @@ function netFinished(k) {
   else netToHost({ t: 'fin' });
 }
 
-const SNAP_LEN = 20;
+const SNAP_LEN = 21;
 function netSnapshot(k) {
-  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2), round(k.freezeT, 2)];
+  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2), round(k.freezeT, 2), round(k.phaseT, 2)];
 }
 function netStore(k, snap) {
   if (!k?.remote || !Array.isArray(snap) || snap.length !== SNAP_LEN || !snap.every(Number.isFinite)) return;
@@ -5279,7 +5310,7 @@ function netInterpolate() {
     k.v = mix(5); k.steer = mix(6); k.drift = b[7]; k.driftT = b[8]; k.driftIn = k.drift ? Math.min(1, k.driftIn + .04) : 0;
     k.boostT = b[9]; k.hopY = Math.max(0, mix(10)); k.pitch = mix(11); k.total = b[12];
     k.spinT = clamp(b[13], 0, SPIN); k.starT = clamp(b[14], 0, 10); k.shieldT = clamp(b[15], 0, 15);
-    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME); k.freezeT = clamp(b[19], 0, FREEZE_TIME);
+    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME); k.freezeT = clamp(b[19], 0, FREEZE_TIME); k.phaseT = clamp(b[20], 0, PHASE_TIME);
     // A short gap in the connection: keep rolling rather than stop dead
     const late = clamp(when - list[list.length - 1].at, 0, COAST_MS) / 1000;
     if (i === list.length - 1 && late > 0) { k.x += Math.sin(k.yaw) * k.v * late; k.z += Math.cos(k.yaw) * k.v * late; }
