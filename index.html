@@ -117,6 +117,7 @@
   @keyframes pop { from { transform: scale(1.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
   @keyframes fade { from { opacity: 1; } to { opacity: 0; } }
   #big.pop { animation: pop .45s cubic-bezier(.2, 1.4, .4, 1); }
+  #big.long { font-size: 72px; }
   #pos { transform-origin: 0 50%; }
   #pos.pop { animation: pop .35s ease-out; }
   #lines { position: absolute; inset: 0; opacity: 0; transition: opacity .25s; background: repeating-conic-gradient(from 0deg at 50% 58%, transparent 0deg 5deg, rgba(255, 255, 255, .5) 5deg 5.5deg); -webkit-mask: radial-gradient(circle at 50% 58%, transparent 30%, #000 80%); mask: radial-gradient(circle at 50% 58%, transparent 30%, #000 80%); }
@@ -177,6 +178,7 @@
   body.touch #clock { font-size: 13px; }
   body.touch #board { display: none; }
   body.touch #big { font-size: 84px; -webkit-text-stroke: 2px #14161d; }
+  body.touch #big.long { font-size: 40px; }
   body.touch #banner { font-size: 26px; }
   body.touch #wrong { font-size: 28px; }
   body.touch #help { bottom: auto; top: 58%; padding: 0 20px; font-size: 14px; }
@@ -323,7 +325,7 @@
   <div id="big"></div>
   <div id="banner"></div>
   <div id="wrong" hidden>Wrong way</div>
-  <div id="help">W / &uarr; go &nbsp; A D / &larr; &rarr; steer &nbsp; S / &darr; brake &nbsp; Shift or Space drift &nbsp; E use item &nbsp; R back on track &nbsp; Esc pause &nbsp; M mute</div>
+  <div id="help">W / &uarr; go &nbsp; A D / &larr; &rarr; steer &nbsp; S / &darr; brake &nbsp; Shift or Space drift &nbsp; E use item &nbsp; R back on track &nbsp; Esc pause &nbsp; M mute<br>Rocket start: press go just as the last red light comes on (on a phone, hold Drift)</div>
   <canvas id="map" width="190" height="190" data-pad="Map"></canvas>
   <div id="dash" data-pad="Speed &amp; boost"><b id="speed">0</b> km/h<div id="chargeBar"><i id="charge"></i></div></div>
   <div id="pads">
@@ -364,10 +366,14 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-21.1';
+const BUILD = '2026-11-22.1';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
+  ['22 Nov 2026', [
+    'Rocket start: press go just as the last red light comes on for a big boost off the line (on a phone, hold Drift). Too early and your engine stalls!',
+    'Time trial ghost 👻: a see-through kart replays your best lap on each track so you can race yourself',
+  ]],
   ['21 Nov 2026', [
     'New item: Steal 🧲 takes an item from the closest racer',
     'New item: Ink 🦑 splats ink over everyone else\'s screen for 5 seconds',
@@ -3211,7 +3217,7 @@ function makeRacer(name, opts, isPlayer) {
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
     onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, inkT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
-    slot: 0, lapNo: 1, lapStart: 0, laps: [],
+    slot: 0, lapNo: 1, lapStart: 0, laps: [], stallT: 0, gasFrom: null,
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: BODIES[opts.body].grass ?? .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
     drift: 0, driftT: 0, driftIn: 0, boostT: 0, padT: 0, hopY: 0, hopV: 0, pitch: 0, slip: 0,
@@ -3305,6 +3311,11 @@ function startRace(plan) {
     // Grand Prix round and points so far, from your own cup or from the host's
     gp: plan ? plan.gp || null : gp ? { round: gp.round, pts: gp.pts, order: gp.order } : null,
   };
+  if (race.tt) {
+    Object.assign(race.tt, { cur: [], lapsSeen: 0, bestRun: null });
+    const gd = ttGhosts()[trackId];
+    if (gd && gd.f?.length >= GF * 4) race.ghost = makeGhost(gd);
+  }
   // Track name on the way in, and which race of the cup this is
   const sub = race.gp ? `Grand Prix · race ${race.gp.round + 1} of ${GP_TRACKS.length}`
     : race.tt ? `Time trial${race.tt.rec ? ` · best lap to beat ${fmtTime(race.tt.rec.lap)}` : ''}` : '';
@@ -3330,6 +3341,7 @@ function leaveRace() {
   if (race) {
     for (const k of race.karts) { removeNameTag(k); world.scene.remove(k.view.group); k.bubble.material.dispose(); k.view.dispose(); }
     for (const f of race.fx) world.scene.remove(f.mesh);
+    if (race.ghost) disposeGhost(race.ghost);
     race = null;
   }
   sound.stop();
@@ -3453,6 +3465,8 @@ function stepKart(k, h) {
     k.throttle = k.brake = 0; k.wantSteer = 0; k.wantDrift = false; k.wantItem = false; k.drift = 0;
     k.v -= k.v * 3 * h;
   }
+  // Stalled at the start after pressing go too early: no gas for a moment
+  if (k.stallT > 0) { k.stallT = Math.max(0, k.stallT - h); k.throttle = 0; }
   k.starT = Math.max(0, k.starT - h); k.shieldT = Math.max(0, k.shieldT - h); k.zapT = Math.max(0, k.zapT - h);
   k.megaT = Math.max(0, k.megaT - h); k.slowT = Math.max(0, k.slowT - h); k.inkT = Math.max(0, (k.inkT || 0) - h); k.knockCD = Math.max(0, k.knockCD - h);
   if (k.roll > 0 && (k.roll -= h) <= 0 && k.isPlayer) sound.sfx('got');
@@ -3605,6 +3619,7 @@ function stepRace(h) {
   const r = race;
   if (!r.waiting) r.t += h;
   if (r.t >= 0) {
+    if (!r.launched) { r.launched = true; for (const k of r.karts) if (!k.remote) launch(k); }
     for (const k of r.karts) {
       if (k.remote) continue;
       if (k.ai) thinkCPU(k, h); else readPlayer(k);
@@ -3613,7 +3628,99 @@ function stepRace(h) {
     bumpKarts(h);
     if (r.items) stepBlocks(h);
     stepFx(h);
-  } else for (const k of r.karts) { if (k.remote) continue; k.throttle = 0; stepKart(k, 0); }
+    if (r.tt && race === r) recordGhost(r);
+  } else for (const k of r.karts) { if (k.remote) continue; if (k.isPlayer) watchLaunch(k, r.t); k.throttle = 0; stepKart(k, 0); }
+}
+
+// Rocket start. The last red light comes on 1s before GO. Start holding go between then and ROCKET_LATE for a big
+// boost, a little after that for a small one. Holding go before the last red light stalls the engine for a moment.
+// On a phone the kart drives itself, so the Drift button stands in for go during the countdown.
+const ROCKET_EARLY = -1, ROCKET_LATE = -.3, ROCKET_BOOST = 1.5, GOOD_BOOST = .6, STALL_TIME = .9;
+function watchLaunch(k, t) {
+  const gas = keys.ArrowUp || keys.KeyW || (TOUCH && touch.drift);
+  if (!gas) k.gasFrom = null; else if (k.gasFrom === null) k.gasFrom = t;
+}
+function launch(k) {
+  // CPUs: some get a rocket start, some a good one
+  const kind = k.ai ? (Math.random() < .3 ? 2 : Math.random() < .35 ? 1 : 0)
+    : k.gasFrom === null ? 0 : k.gasFrom < ROCKET_EARLY ? -1 : k.gasFrom <= ROCKET_LATE ? 2 : 1;
+  k.gasFrom = null;
+  if (kind === 2) k.boostT = Math.max(k.boostT, ROCKET_BOOST);
+  else if (kind === 1) k.boostT = Math.max(k.boostT, GOOD_BOOST);
+  else if (kind === -1) {
+    k.stallT = STALL_TIME;
+    if (k.isPlayer || near(k, 60)) burst(k.x - Math.sin(k.yaw) * 1.2, k.y + .5, k.z - Math.cos(k.yaw) * 1.2, 24, [.45, .45, .48]);
+  }
+  if (!k.isPlayer) return;
+  race.launchMsg = { 2: 'ROCKET START!', 1: 'GOOD START!', '-1': 'TOO EARLY!' }[kind] || null;
+  if (kind === -1) { sound.beep(110, .45); buzz(120); }
+  else if (kind === 2) buzz(60);
+}
+
+// Time trial ghost: your best lap on each track, replayed by a see-through kart. Frames are recorded every GHOST_DT
+// seconds as [time into lap, x, y, z, yaw, pitch, progress into lap in track samples, speed].
+const GHOST_DT = .05, GF = 8;
+function ttGhosts() { try { return JSON.parse(localStorage.getItem('kart-ghost') || '{}'); } catch (e) { return {}; } }
+function saveTtGhosts(g) { try { localStorage.setItem('kart-ghost', JSON.stringify(g)); } catch (e) {} }
+function recordGhost(r) {
+  const k = r.you, tt = r.tt;
+  if (k.laps.length !== tt.lapsSeen) {   // a lap just ended: keep it if it's this run's best so far
+    const lap = k.laps[k.laps.length - 1];
+    if (!tt.bestRun || lap < tt.bestRun.lap) tt.bestRun = { lap, f: tt.cur };
+    tt.lapsSeen = k.laps.length; tt.cur = [];
+  }
+  if (k.finish !== null) return;
+  const t = r.t - k.lapStart;
+  if (tt.cur.length && t - tt.cur[tt.cur.length - GF] < GHOST_DT) return;
+  tt.cur.push(+t.toFixed(3), +k.x.toFixed(2), +(k.y + k.hopY).toFixed(2), +k.z.toFixed(2), +(k.yaw + k.slip).toFixed(3),
+    +k.pitch.toFixed(3), +(k.total - (k.lapNo - 1) * N).toFixed(1), +k.v.toFixed(1));
+}
+function makeGhost(data) {
+  const view = buildKart({ body: 'sprint', paint: PAINTS[0], number: 0 }), mats = [];
+  view.group.rotation.order = 'YXZ';
+  view.group.traverse(o => {
+    if (!o.material) return;
+    const see = m => { const c = m.clone(); c.transparent = true; c.opacity = .35; c.depthWrite = false; mats.push(c); return c; };
+    o.material = Array.isArray(o.material) ? o.material.map(see) : see(o.material);
+    o.castShadow = false;
+  });
+  view.group.visible = false;
+  world.scene.add(view.group);
+  return { view, mats, f: data.f, lap: data.lap, n: data.f.length / GF, x: 0, z: 0 };
+}
+function disposeGhost(g) {
+  world.scene.remove(g.view.group);
+  g.mats.forEach(m => m.dispose());
+  g.view.dispose();
+}
+// Index of the last frame at or before t (frames are in time order)
+function ghostFrame(g, t) {
+  let lo = 0, hi = g.n - 1;
+  if (t >= g.f[hi * GF]) return hi;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (g.f[m * GF] <= t) lo = m; else hi = m; }
+  return lo;
+}
+function renderGhost(r, dt) {
+  const g = r.ghost, you = r.you, f = g.f, t = r.t - you.lapStart;
+  const show = r.t >= 0 && you.finish === null && t <= f[(g.n - 1) * GF];
+  g.view.group.visible = show;
+  if (!show) return;
+  const a = ghostFrame(g, t) * GF, b = Math.min(a + GF, (g.n - 1) * GF);
+  const u = b > a ? clamp((t - f[a]) / Math.max(1e-6, f[b] - f[a]), 0, 1) : 0, L = o => f[a + o] + (f[b + o] - f[a + o]) * u;
+  g.x = L(1); g.z = L(3);
+  g.view.group.position.set(g.x, L(2), g.z);
+  g.view.group.rotation.set(L(5), f[a + 4] + wrapA(f[b + 4] - f[a + 4]) * u, 0);
+  g.view.update(dt, L(7), 0);
+}
+// How far ahead (-) or behind (+) of your ghost you are, in seconds, at the same point on the lap
+function ghostGap(r) {
+  const g = r.ghost, you = r.you, f = g.f;
+  if (!g || r.t <= 0 || you.finish !== null) return null;
+  const prog = you.total - (you.lapNo - 1) * N;
+  if (prog < 1 || prog > f[(g.n - 1) * GF + 6]) return null;
+  let lo = 0, hi = g.n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (f[m * GF + 6] < prog) lo = m; else hi = m; }
+  return (r.t - you.lapStart) - f[hi * GF];
 }
 
 function ranking() {
@@ -3638,6 +3745,9 @@ function finishPlayer() {
   let place = ranking().indexOf(r.you) + 1;
   if (r.tt) {
     // Save any new records; confetti if you set one
+    recordGhost(r);
+    const b = r.tt.bestRun, ghosts = ttGhosts(), og = ghosts[r.tt.track];
+    if (b && b.f.length >= GF * 4 && (!og || b.lap < og.lap)) { ghosts[r.tt.track] = { lap: +b.lap.toFixed(3), f: b.f }; saveTtGhosts(ghosts); r.tt.newGhost = true; }
     const recs = ttRecords(), old = recs[r.tt.track] || {}, lap = Math.min(...r.you.laps), total = r.you.finish;
     r.tt.newLap = !old.lap || lap < old.lap; r.tt.newTotal = !old.total || total < old.total;
     r.tt.old = old.lap ? old : null;
@@ -3657,6 +3767,7 @@ function setBig(text) {
   const b = $('big');
   if (b.textContent === String(text)) return;
   b.textContent = text;
+  b.classList.toggle('long', String(text).length > 8);
   b.classList.remove('pop');
   if (text !== '') { void b.offsetWidth; b.classList.add('pop'); }
 }
@@ -3679,7 +3790,13 @@ function ttBoard(you, r) {
   const best = you.laps.length ? Math.min(...you.laps) : null, rec = r.tt.rec;
   const now = you.finish === null ? (r.t > 0 ? r.t - you.lapStart : 0) : null;
   return (now !== null ? `<li class="me">Lap ${you.lap} ${fmtTime(now)}</li>` : '') +
-    `<li>Best lap ${best !== null ? fmtTime(best) : '-'}</li><li>Record ${rec ? fmtTime(rec.lap) : '-'}</li>`;
+    `<li>Best lap ${best !== null ? fmtTime(best) : '-'}</li><li>Record ${rec ? fmtTime(rec.lap) : '-'}</li>` + ghostLine(r);
+}
+function ghostLine(r) {
+  if (!r.ghost) return '';
+  const gap = ghostGap(r);
+  if (gap === null) return `<li>👻 Ghost ${fmtTime(r.ghost.lap)}</li>`;
+  return `<li>👻 <b style="color:${gap <= 0 ? '#33e06b' : '#ff5a4f'}">${gap <= 0 ? '-' : '+'}${Math.abs(gap).toFixed(2)}</b></li>`;
 }
 function drawTtResults() {
   const t = race.tt, you = race.you, best = Math.min(...you.laps);
@@ -3687,7 +3804,8 @@ function drawTtResults() {
   const rows = you.laps.map((l, i) => `<tr class="${l === best ? 'me' : ''}"><td style="white-space:nowrap">Lap ${i + 1}</td><td>${fmtTime(l)}${l === best ? ' ⭐' : ''}</td></tr>`).join('') +
     `<tr><td>Total</td><td>${fmtTime(you.finish)}</td></tr>`;
   const old = t.old ? `<p class="best">Old records: best lap ${fmtTime(t.old.lap)}, 3 laps ${t.old.total ? fmtTime(t.old.total) : '-'}</p>` : '';
-  $('overlayBody').innerHTML = `<h3>${head}</h3><p class="best">Your score (best lap): <b style="color:var(--hot)">${fmtTime(best)}</b></p><table>${rows}</table>${old}`;
+  const ghost = t.newGhost ? `<p class="best">👻 Your ghost now drives this ${fmtTime(best)} lap. Try again to race it!</p>` : '';
+  $('overlayBody').innerHTML = `<h3>${head}</h3><p class="best">Your score (best lap): <b style="color:var(--hot)">${fmtTime(best)}</b></p><table>${rows}</table>${old}${ghost}`;
   $('resume').hidden = true;
   $('again').hidden = false;
   $('again').textContent = 'Try again';
@@ -3844,8 +3962,8 @@ function drawHud() {
   const board = r.tt ? ttBoard(you, r) : order.map((k, i) => `<li class="${k.isPlayer ? 'me' : ''}">${i + 1} ${esc(k.name)}</li>`).join('');
   if (board !== r.board) $('board').innerHTML = r.board = board;
   if (r.t < 0) setBig(r.t > -3 ? Math.ceil(-r.t) : '');
-  else if (r.t < 1 && !r.over) setBig('GO!');
-  else if (!r.over && $('big').textContent === 'GO!') setBig('');
+  else if (r.t < (r.launchMsg ? 1.4 : 1) && !r.over) setBig(r.launchMsg || 'GO!');
+  else if (!r.over && $('big').textContent === (r.launchMsg || 'GO!')) setBig('');
   $('help').hidden = r.t > 1.5;
   if (you.lap !== r.lapShown && !r.over) {
     r.lapShown = you.lap;
@@ -3864,6 +3982,10 @@ function drawHud() {
     m.fillStyle = k.isPlayer ? '#ffcf33' : '#' + k.view.paint.toString(16).padStart(6, '0');
     m.strokeStyle = '#14161d'; m.lineWidth = 1.5;
     m.beginPath(); m.arc(mapX(k.x), mapY(k.z), k.isPlayer ? 5.5 : 4, 0, Math.PI * 2); m.fill(); m.stroke();
+  }
+  if (r.ghost?.view.group.visible) {
+    m.fillStyle = 'rgba(255,255,255,.6)'; m.strokeStyle = 'rgba(20,22,29,.6)';
+    m.beginPath(); m.arc(mapX(r.ghost.x), mapY(r.ghost.z), 4.5, 0, Math.PI * 2); m.fill(); m.stroke();
   }
   // Friends' names next to their dots, so you can always find them
   m.font = `italic 800 ${TOUCH ? 16 : 12}px system-ui, sans-serif`; m.textBaseline = 'middle'; m.lineWidth = 3; m.strokeStyle = 'rgba(10,12,18,.85)'; m.fillStyle = '#fff';
@@ -4062,6 +4184,7 @@ function raceFrame(dt) {
     if (!race) return;
     if (r.online) netInterpolate();
     for (const k of r.karts) renderKart(k, dt);
+    if (r.ghost) renderGhost(r, dt);
     renderFx(dt);
     stepParticles(dt);
     world.padTex.offset.y -= dt * 1.5;
@@ -4549,7 +4672,8 @@ function drawTrackPicker() {
   else if (tt) {
     const rec = ttRecords()[state.track];
     $('gpNote').textContent = `Just you and the clock: 3 laps on the Sprint kart, no CPUs, no lucky blocks. Your best lap is your score. ` +
-      (rec ? `Your records on ${TRACKS[state.track].name}: best lap ${fmtTime(rec.lap)}, best 3 laps ${rec.total ? fmtTime(rec.total) : '-'}.` : `No time set on ${TRACKS[state.track].name} yet.`);
+      (rec ? `Your records on ${TRACKS[state.track].name}: best lap ${fmtTime(rec.lap)}, best 3 laps ${rec.total ? fmtTime(rec.total) : '-'}.` : `No time set on ${TRACKS[state.track].name} yet.`) +
+      (ttGhosts()[state.track] ? ' 👻 Your ghost will race your best lap with you.' : ' Set a lap and a ghost will race it with you next time.');
   }
   // On Frosty Peaks it snows instead of raining, and a thunderstorm becomes heavy snow. In Canyon Run it never
   // rains: the wind picks up sand instead, and a thunderstorm becomes a sandstorm.
