@@ -241,7 +241,24 @@
     .card button { margin-top: 0; padding: 7px; font-size: 13px; }
   }
   #logBtn { width: 100%; margin-top: 22px; padding: 9px; font-size: 13px; font-weight: 700; color: var(--dim); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
-  #logBtn:hover { color: var(--text); }
+  #logBtn:hover, #guideBtn:hover { color: var(--text); }
+  #guideBtn { width: 100%; margin-top: 8px; padding: 9px; font-size: 13px; font-weight: 700; color: var(--dim); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
+  #guide { display: none; position: fixed; inset: 0; z-index: 20; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 12, 18, .6); }
+  #guide.show { display: flex; }
+  #guide .card { width: min(480px, 100%); max-height: 100%; display: flex; flex-direction: column; }
+  #guideHint { margin: 0 0 10px; font-size: 13px; color: var(--dim); }
+  #guideGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; overflow-y: auto; margin: 0 -4px; padding: 2px 4px 4px; }
+  #guideGrid button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; font-size: 12px; font-weight: 700; color: var(--text); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 10px; }
+  #guideGrid button:hover { border-color: var(--hot); }
+  #guideGrid .ic { font-size: 30px; line-height: 1; }
+  #guideInfo { overflow-y: auto; }
+  #guideInfo .big { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  #guideInfo .big .ic { font-size: 54px; line-height: 1; }
+  #guideInfo .big b { display: block; font-size: 20px; }
+  #guideInfo .big span { font-size: 13px; color: var(--dim); }
+  #guideInfo h4 { margin: 12px 0 3px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--hot); }
+  #guideInfo p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text); }
+  #guide .netRow { margin-top: 12px; }
   #log { display: none; position: fixed; inset: 0; z-index: 20; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 12, 18, .6); }
   #log.show { display: flex; }
   #log .card { width: min(480px, 100%); max-height: 100%; display: flex; flex-direction: column; }
@@ -310,6 +327,7 @@
   <label class="devOnly">Spin wheels <input type="checkbox" id="spin"></label>
   <label class="devOnly">Turntable <input type="checkbox" id="turn" checked></label>
   <button id="logBtn">&#128220; Update log</button>
+  <button id="guideBtn">&#127873; Item guide</button>
 </aside>
 
 <div id="hud">
@@ -353,6 +371,14 @@
   <div class="netRow"><button id="padReset">Reset</button><button id="padDone">Done</button></div>
 </div>
 
+<div id="guide"><div class="card">
+  <h3 id="guideHead">Item guide</h3>
+  <p id="guideHint">Tap an item to see what it does.</p>
+  <div id="guideGrid"></div>
+  <div id="guideInfo" hidden></div>
+  <div class="netRow"><button id="guideBack" hidden>&larr; All items</button><button id="guideClose">Close</button></div>
+</div></div>
+
 <div id="log"><div class="card">
   <h3>Update log</h3>
   <div id="logList"></div>
@@ -366,11 +392,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-22.5';
+const BUILD = '2026-11-22.6';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['22 Nov 2026', [
+    'Item guide: a new button under Update log. Tap any item to see what it does and how to use it',
     'New item: Balloon 🎈 floats over your kart while you hold it and pops instead of you the next time something hits you',
     'New item: Decoy 🎭 drops a copy of your kart for 15 seconds. Rockets, Freeze and Steal go for it instead of you if it\'s closer, and it breaks after 1 hit',
     'New item: Ghost mode 👻 makes you see-through for 5 seconds: karts and items pass right through you',
@@ -4540,6 +4567,44 @@ addEventListener('keydown', e => {
   if ((e.code === 'KeyE' || e.code === 'KeyX') && race.t > 0) itemReq = true;
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Item guide popup: every item, and what it does when you tap it
+const ITEM_GUIDE = {
+  turbo: ['A quick burst of speed.', 'Use it on a straight, or to cut across the grass without slowing down.', 'Nothing can stop it.'],
+  triple: ['Three turbos in one. Each press uses one.', 'Fire them one after another for a long boost, or save some for later.', 'If someone steals it, they get the turbos you have left.'],
+  oil: ['Drops an oil slick behind you. Anyone who drives over it spins out. It stays on the road for 40 seconds.', 'Use it when someone is right behind you, or drop it on the racing line before a corner.', 'A shield, superstar, balloon or ghost mode gets through safely.'],
+  rocket: ['A homing rocket that flies along the track after the racer one place ahead of you and spins them out.', 'Fire it when someone is just ahead of you. In 1st place it just flies forward.', 'A shield, superstar, balloon or ghost mode stops it. A decoy fools it.'],
+  shield: ['A bubble around your kart for 12 seconds. It blocks the next hit and then pops.', 'Turn it on when a rocket is coming, or before you drive past oil.', 'It only blocks one hit.'],
+  star: ['Superstar! For 7 seconds you go faster, can\'t be hurt, don\'t slow down on grass, and flatten any kart you touch.', 'Use it to catch up, or to barge through a crowd of karts.', 'Mostly comes to racers near the back.'],
+  zap: ['Zaps every other racer. They spin out and go slower for 3.5 seconds.', 'Use it straight away to catch up with the pack.', 'Only racers near the back get it. A shield, superstar, balloon or ghost mode stops it.'],
+  mega: ['Your kart grows big and heavy for 8 seconds. Driving into anyone knocks them aside and slows them down.', 'Use it when other karts are close by, then ram them.', 'A shield or balloon stops the knock. Superstars and other mega karts can\'t be knocked.'],
+  freeze: ['Freezes the closest racer, wherever they are, in a block of ice for 2.5 seconds.', 'Use it on someone right next to you, or to stop the racer just ahead.', 'A shield, superstar, balloon or ghost mode stops it. If someone\'s decoy is closer, the decoy breaks instead.'],
+  coin: ['Does nothing in a single race. In a Grand Prix it\'s worth 1 bonus point.', 'In a Grand Prix, use it any time to bank the point.', 'Can be stolen before you use it.'],
+  steal: ['Takes an item from the closest racer and gives it to you.', 'Use it when someone close by has a good item.', 'A shield, superstar, balloon or ghost mode stops it. A decoy fools it. You get nothing if they have nothing.'],
+  ink: ['Splats ink over the screen of every racer ahead of you for 5 seconds. CPUs wobble and slow down.', 'Use it when you\'re behind. In 1st place it does nothing.', 'Ghost mode keeps your screen clean.'],
+  phase: ['Ghost mode: you turn see-through for 5 seconds. Karts drive through you and no item can touch you.', 'Turn it on when a rocket is chasing you, or a superstar or mega kart is coming.', 'Before you use it, someone can steal it.'],
+  coinbag: ['A bag of 3 coins. Each press uses one. In a Grand Prix that\'s 3 bonus points.', 'In a Grand Prix, use them any time to bank the points.', 'If someone steals it, they get the coins you have left.'],
+  balloon: ['A red balloon floats over your kart. The next hit pops the balloon instead of you.', 'You don\'t press anything: it works by itself while you hold it, in either item slot. Pressing the item button uses your other item.', 'Pops on rockets, oil, zaps, freeze, steal, superstars and mega karts. A shield goes first.'],
+  decoy: ['Leaves a copy of your kart on the road behind you for 15 seconds, or until it takes 1 hit.', 'Drop it when a rocket is chasing you or someone is close behind. Rockets, freeze and steal go for it when it\'s closer than you.', 'Karts drive through it. You can only have one at a time.'],
+};
+function itemIco(id) { return id === 'coin' ? '<i class="coinIco"></i>' : ITEMS[id].icon; }
+$('guideGrid').innerHTML = ITEM_KEYS.map(id => `<button data-id="${id}"><span class="ic">${itemIco(id)}</span>${ITEMS[id].name}</button>`).join('');
+function showGuideList() {
+  $('guideGrid').hidden = false; $('guideHint').hidden = false; $('guideInfo').hidden = true; $('guideBack').hidden = true;
+}
+function showGuideItem(id) {
+  const [does, how, tip] = ITEM_GUIDE[id] || ['', '', ''], uses = ITEMS[id].uses;
+  $('guideInfo').innerHTML = `<div class="big"><span class="ic">${itemIco(id)}</span><div><b>${ITEMS[id].name}</b><span>${id === 'balloon' ? 'Works by itself' : uses > 1 ? `${uses} uses` : '1 use'}</span></div></div>` +
+    `<h4>What it does</h4><p>${does}</p><h4>How to use it</h4><p>${how}${id === 'balloon' ? '' : ` Press <b>E</b> on a keyboard, or the <b>Item</b> button on a phone.`}</p><h4>Good to know</h4><p>${tip}</p>`;
+  $('guideGrid').hidden = true; $('guideHint').hidden = true; $('guideInfo').hidden = false; $('guideBack').hidden = false;
+  $('guideInfo').scrollTop = 0;
+}
+$('guideGrid').onclick = e => { const b = e.target.closest('button'); if (b) showGuideItem(b.dataset.id); };
+$('guideBtn').onclick = () => { showGuideList(); $('guide').classList.add('show'); };
+$('guideBack').onclick = showGuideList;
+$('guideClose').onclick = () => $('guide').classList.remove('show');
+$('guide').onclick = e => { if (e.target === $('guide')) $('guide').classList.remove('show'); };
+addEventListener('keydown', e => { if (e.code === 'Escape') $('guide').classList.remove('show'); });
 
 // Update log popup
 $('logList').innerHTML = UPDATES.map(([day, items]) => `<h4>${day}</h4><ul>${items.map(t => `<li>${t}</li>`).join('')}</ul>`).join('');
