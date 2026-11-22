@@ -366,11 +366,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-22.4';
+const BUILD = '2026-11-22.5';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['22 Nov 2026', [
+    'New item: Balloon 🎈 floats over your kart while you hold it and pops instead of you the next time something hits you',
+    'New item: Decoy 🎭 drops a copy of your kart for 15 seconds. Rockets, Freeze and Steal go for it instead of you if it\'s closer, and it breaks after 1 hit',
     'New item: Ghost mode 👻 makes you see-through for 5 seconds: karts and items pass right through you',
     'New item: Coin bag 💰 holds 3 coins (3 bonus points in a Grand Prix)',
     'Ink 🦑 now only splats racers who are ahead of you in the race, not the ones behind',
@@ -2828,7 +2830,14 @@ const ITEMS = {
   ink: { icon: '🦑', name: 'Ink', uses: 1 },
   phase: { icon: '👻', name: 'Ghost mode', uses: 1 },
   coinbag: { icon: '💰', name: 'Coin bag', uses: 3 },
+  balloon: { icon: '🎈', name: 'Balloon', uses: 1 },
+  decoy: { icon: '🎭', name: 'Decoy', uses: 1 },
 };
+// Balloon: works by itself while it's in either item slot. The next hit (rocket, oil, zap, freeze, steal, superstar or
+// mega kart) pops the balloon instead of you. Pressing the item button never wastes it.
+// Decoy: a still copy of your kart left on the road behind you for DECOY_TIME seconds. Rockets, Freeze and Steal go for
+// it when it's the closest thing to them, and one hit breaks it. Karts drive through it. Each racer has one at a time.
+const DECOY_TIME = 15;
 // Ghost mode: see-through for PHASE_TIME seconds. Karts drive through you and no item can touch you.
 // Coin bag: three coins, used one at a time like a triple turbo.
 const PHASE_TIME = 5;
@@ -2847,7 +2856,7 @@ const ITEM_ODDS = {
   turbo: p => 2 + 2 * p, triple: p => 3 * p * p, oil: p => 4.5 * (1 - p) + .4, rocket: p => .6 + 2.6 * p,
   shield: p => 3 * (1 - p) + .5, star: p => 2.4 * p * p * p, zap: p => p > .7 ? 1.6 * p : 0, mega: p => .7 + 1.8 * p,
   freeze: p => .8 + 1.6 * p, coin: p => 1.5, steal: p => .9 + 1.4 * p, ink: p => .6 + 1.6 * p,
-  phase: p => .8 + 1.2 * p, coinbag: p => .6,
+  phase: p => .8 + 1.2 * p, coinbag: p => .6, balloon: p => 2 * (1 - p) + .6, decoy: p => 1.2 * (1 - p) + .5,
 };
 
 function buildBlocks(w) {
@@ -2917,6 +2926,11 @@ function shiftItems(k) {
 }
 
 function useItem(k) {
+  // A balloon in the first slot just waits for a hit; use whatever is in the second slot instead
+  if (k.item === 'balloon') {
+    if (!k.item2 || k.roll2 > 0) return;
+    [k.item, k.item2, k.uses, k.uses2] = [k.item2, k.item, k.uses2, k.uses];
+  }
   const kind = k.item;
   if (!kind || k.roll > 0) return;
   if (--k.uses <= 0) k.item = null;
@@ -2929,17 +2943,16 @@ function useItem(k) {
     const order = ranking(), at = order.indexOf(k), target = at > 0 ? order[at - 1] : null;
     fire({ k: 'rocket', slot: k.slot, s: k.total + 3 / DS, lat: k.lat, target: target ? target.slot : -1 });
   } else if (kind === 'zap') fire({ k: 'zap', slot: k.slot });
-  else if (kind === 'freeze') {
-    const t = freezeTarget(k);
-    fire({ k: 'freeze', slot: k.slot, target: t ? t.slot : -1 });
-  } else if (kind === 'steal') {
-    const t = freezeTarget(k);
-    fire({ k: 'steal', slot: k.slot, target: t ? t.slot : -1 });
+  else if (kind === 'freeze') fire({ k: 'freeze', slot: k.slot, target: pickTarget(k) });
+  else if (kind === 'steal') fire({ k: 'steal', slot: k.slot, target: pickTarget(k) });
+  else if (kind === 'decoy') {
+    const x = k.x - Math.sin(k.yaw) * 3.2, z = k.z - Math.cos(k.yaw) * 3.2;
+    fire({ k: 'decoy', slot: k.slot, x, z, yaw: k.yaw });
   } else if (kind === 'ink') fire({ k: 'ink', slot: k.slot, s: k.total });   // s: how far round you were, so only karts ahead get inked
   else if (kind === 'coin' || kind === 'coinbag') fire({ k: 'coin', slot: k.slot });
   else if (kind === 'phase') { k.phaseT = PHASE_TIME; burst(k.x, k.y + 1, k.z, 22, [.85, .9, 1]); }
   if (k.isPlayer) buzz(35);
-  if (kind !== 'freeze' && kind !== 'steal' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind === 'coinbag' ? 'coin' : kind, k.isPlayer ? 1 : .5);
+  if (kind !== 'freeze' && kind !== 'steal' && kind !== 'decoy' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind === 'coinbag' ? 'coin' : kind, k.isPlayer ? 1 : .5);
 }
 
 const near = (k, d) => race && Math.abs(k.x - race.you.x) + Math.abs(k.z - race.you.z) < d;
@@ -2953,7 +2966,9 @@ function fire(e) {
 function spawnFx(e) {
   const owner = race.karts.find(k => k.slot === e.slot) || null, kit = world.kit;
   if (e.k === 'zap') { zapAll(owner); return; }
+  if ((e.k === 'freeze' || e.k === 'steal') && e.target >= 100) { decoyHitBy(e.k, owner, e.target - 100); return; }
   if (e.k === 'freeze') { freezeFx(owner, race.karts.find(k => k.slot === e.target) || null); return; }
+  if (e.k === 'decoy') { spawnDecoy(owner, e); return; }
   if (e.k === 'steal') { stealFx(owner, race.karts.find(k => k.slot === e.target) || null); return; }
   if (e.k === 'stolen') { stolenFx(owner, race.karts.find(k => k.slot === e.target) || null, e.item, e.uses); return; }
   if (e.k === 'ink') { inkAll(owner, e.s); return; }
@@ -2988,6 +3003,58 @@ function coinFx(k) {
     clearTimeout(trackBannerTimer);
     trackBannerTimer = setTimeout(() => { $('banner').className = ''; }, 1600);
   }
+}
+
+// Who Freeze and Steal go for: the closest racer, or someone else's decoy if that's closer.
+// A decoy is sent as 100 + its owner's slot.
+function pickTarget(k) {
+  const t = freezeTarget(k);
+  let best = t ? t.slot : -1, bd = t ? (t.x - k.x) ** 2 + (t.y - k.y) ** 2 + (t.z - k.z) ** 2 : Infinity;
+  for (const f of race.fx) {
+    if (f.k !== 'decoy' || f.broken || f.owner === k || !f.owner) continue;
+    const d = (f.x - k.x) ** 2 + (f.y - k.y) ** 2 + (f.z - k.z) ** 2;
+    if (d < bd) { bd = d; best = 100 + f.owner.slot; }
+  }
+  return best;
+}
+function spawnDecoy(owner, e) {
+  if (!owner) return;
+  // One decoy each: a new one replaces the old
+  const old = race.fx.findIndex(f => f.k === 'decoy' && f.owner === owner);
+  if (old >= 0) { world.scene.remove(race.fx[old].mesh); race.fx.splice(old, 1); }
+  const n = nearestAny(e.x, e.z), l = locate(e.x, e.z, n.i, 10);
+  const mesh = owner.view.group.clone();
+  mesh.traverse(o => { if (o.userData.extra) o.visible = false; });
+  mesh.scale.setScalar(1);
+  const y = surfaceY(e.x, e.z, l.i, l.lat);
+  mesh.position.set(e.x, y, e.z);
+  mesh.rotation.set(0, e.yaw || 0, 0);
+  world.scene.add(mesh);
+  race.fx.push({ k: 'decoy', owner, age: 0, life: DECOY_TIME, x: e.x, y, z: e.z, i: l.i, lat: l.lat, mesh });
+  if (owner.isPlayer || near(owner, 60)) { burst(e.x, y + 1, e.z, 18, [.75, .75, .8]); sound.sfx('pop', owner.isPlayer ? .6 : .3); }
+}
+// Breaks on the spot; stepFx clears it away
+function breakDecoy(f) {
+  if (f.broken) return;
+  f.broken = true; f.mesh.visible = false;
+  burst(f.x, f.y + 1, f.z, 30, [.6, .6, .65]);
+  if (near(f, 80)) sound.sfx('pop', .7);
+}
+// Freeze or Steal hit a decoy: the effect still goes off, the decoy breaks, and the real kart is safe
+function decoyHitBy(kind, owner, slot) {
+  if (kind === 'freeze') freezeFx(owner, null); else stealFx(owner, null);
+  const f = race.fx.find(f => f.k === 'decoy' && !f.broken && f.owner && f.owner.slot === slot);
+  if (f) breakDecoy(f);
+}
+// The balloon pops instead of you. True if there was one to pop.
+const holdsBalloon = k => k.item === 'balloon' && k.roll <= 0 || k.item2 === 'balloon' && k.roll2 <= 0;
+function popBalloon(k) {
+  if (!holdsBalloon(k)) return false;
+  if (k.item === 'balloon' && k.roll <= 0) { k.item = null; k.uses = 0; } else { k.item2 = null; k.uses2 = 0; }
+  burst(k.x, k.y + 2.6, k.z, 28, [1, .25, .3]);
+  if (k.isPlayer || near(k, 60)) sound.sfx('pop', k.isPlayer ? 1 : .5);
+  if (k.isPlayer) { buzz(50); race.shake = Math.max(race.shake, .2); }
+  return true;
 }
 
 function placeRocket(f) {
@@ -3027,6 +3094,7 @@ function freezeFx(owner, k) {
     if (k.isPlayer) sound.sfx('pop');
     return;
   }
+  if (popBalloon(k)) return;
   k.freezeT = FREEZE_TIME; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0; k.trickB = 0;
   if (k.isPlayer) { race.shake = .4; flash('freeze'); buzz([80, 40, 80]); }
 }
@@ -3044,6 +3112,7 @@ function stealFx(owner, k) {
     if (k.isPlayer) sound.sfx('pop');
     return;
   }
+  if (popBalloon(k)) return;
   let item = null, uses = 0;
   if (k.item && k.roll <= 0) { item = k.item; uses = k.uses; k.item = null; k.uses = 0; }
   else if (k.item2 && k.roll2 <= 0) { item = k.item2; uses = k.uses2; k.item2 = null; k.uses2 = 0; }
@@ -3108,6 +3177,7 @@ function hit(k) {
     if (k.isPlayer) sound.sfx('pop');
     return false;
   }
+  if (popBalloon(k)) return false;
   k.spinT = SPIN; k.v *= .4; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0;
   if (k.isPlayer) { race.shake = .6; flash('hit'); sound.sfx('bonk'); buzz([60, 40, 90]); }
   return true;
@@ -3117,6 +3187,7 @@ function hit(k) {
 function knock(k, nx, nz) {
   if (k.knockCD > 0 || k.starT > 0 || k.megaT > 0 || k.finish !== null) return;
   k.knockCD = 1;
+  if (popBalloon(k)) return;
   if (k.shieldT > 0) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
@@ -3160,8 +3231,8 @@ function stepFx(h) {
   for (let n = list.length - 1; n >= 0; n--) {
     const f = list[n];
     f.age += h;
-    let gone = f.age > f.life;
-    if (f.k === 'rocket') {
+    let gone = f.age > f.life || f.broken;
+    if (f.k === 'rocket' && !gone) {
       f.s += 70 * h / DS;
       const t = f.target;
       if (t && race.karts.includes(t)) {
@@ -3169,8 +3240,23 @@ function stepFx(h) {
         if (gap > -4 && gap < 170) f.lat += (t.lat - f.lat) * Math.min(1, h * (gap < 35 ? 9 : 2.5));
       }
       placeRocket(f);
+      // A rocket chasing someone turns for their decoy when it's coming up, and any decoy it touches takes the hit
+      for (const d of race.fx) {
+        if (d.k !== 'decoy' || d.broken) continue;
+        const ahead = wrapI(d.i - f.i) * DS;
+        if (d.owner === t && ahead > -3 && ahead < 45) f.lat += (d.lat - f.lat) * Math.min(1, h * 9);
+        if ((d.x - f.x) ** 2 + (d.z - f.z) ** 2 < 6.5) {
+          if (near(f, 120)) { burst(f.x, f.y, f.z, 40, [1, .55, .15]); sound.sfx('boom', .6); }
+          breakDecoy(d); gone = true; break;
+        }
+      }
     }
-    if (!gone) for (const k of race.karts) {
+    if (f.k === 'decoy') {
+      // Flickers in its last two seconds
+      f.mesh.visible = !f.broken && (f.life - f.age > 2 || Math.sin(f.age * 25) > 0);
+      if (gone && !f.broken && near(f, 80)) burst(f.x, f.y + 1, f.z, 18, [.6, .6, .65]);
+    }
+    if (!gone && f.k !== 'decoy') for (const k of race.karts) {
       if (k === f.owner && (f.k === 'rocket' || f.age < 1.2) || k.phaseT > 0) continue;
       const dx = k.x - f.x, dz = k.z - f.z;
       if (dx * dx + dz * dz > (f.k === 'rocket' ? 5.8 : 4.6)) continue;
@@ -3229,6 +3315,7 @@ const keys = {};
 const touch = { steer: 0, drift: false, brake: false };
 let race = null;
 
+let balloonGeo = null, stringGeo = null;
 function makeRacer(name, opts, isPlayer) {
   const view = buildKart(opts), st = BODIES[opts.body].stats;
   view.group.rotation.order = 'YXZ';
@@ -3240,8 +3327,18 @@ function makeRacer(name, opts, isPlayer) {
   const ice = new THREE.Mesh(world.kit.iceGeo, world.kit.iceMat);
   ice.position.y = .8; ice.visible = false;
   view.group.add(ice);
+  // A red balloon on a string over the back of the kart while you hold a Balloon item
+  const balloon = new THREE.Group(), bMat = new THREE.MeshStandardMaterial({ color: 0xff3348, roughness: .3, metalness: 0, emissive: 0x400008 });
+  const ball = new THREE.Mesh(balloonGeo ||= new THREE.SphereGeometry(.5, 18, 14), bMat);
+  ball.scale.set(1, 1.18, 1); ball.position.y = 1.45;
+  const str = new THREE.Mesh(stringGeo ||= new THREE.CylinderGeometry(.018, .018, 1.4, 4), new THREE.MeshBasicMaterial({ color: 0xeeeeee }));
+  str.position.y = .7;
+  balloon.add(ball, str);
+  balloon.position.set(0, 1.2, -1.1); balloon.visible = false;
+  view.group.add(balloon);
+  bubble.userData.extra = ice.userData.extra = balloon.userData.extra = true;   // left off a decoy's copy of the kart
   return {
-    ice,
+    ice, balloon,
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
     onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, phaseT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, inkT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
@@ -3367,7 +3464,7 @@ function startRace(plan) {
 let trackBannerTimer = 0;
 function leaveRace() {
   if (race) {
-    for (const k of race.karts) { removeNameTag(k); world.scene.remove(k.view.group); k.bubble.material.dispose(); k.view.dispose(); }
+    for (const k of race.karts) { removeNameTag(k); world.scene.remove(k.view.group); k.bubble.material.dispose(); k.balloon.children.forEach(o => o.material.dispose()); k.view.dispose(); }
     for (const f of race.fx) world.scene.remove(f.mesh);
     if (race.ghost) disposeGhost(race.ghost);
     race = null;
@@ -3467,6 +3564,8 @@ function thinkCPU(k, h) {
     if (it === 'rocket') go = go && (karts.some(o => o !== k && gapTo(o) > 6 && gapTo(o) < 140) || k.itemWait < -6);
     if (it === 'ink') go = go && karts.some(o => o !== k && o.finish === null && o.total > k.total);   // in the lead, keep it until someone passes
     if (it === 'mega') go = go && (karts.some(o => o !== k && Math.abs(gapTo(o)) < 25) || k.itemWait < -6);
+    // Decoy: when a rocket is coming, or someone is close behind
+    if (it === 'decoy') go = go && (race.fx.some(f => f.k === 'rocket' && f.target === k) || karts.some(o => o !== k && gapTo(o) < -3 && gapTo(o) > -40) || k.itemWait < -6);
     // Ghost mode: when a rocket is coming, or a superstar or mega kart is close by
     if (it === 'phase') go = go && (race.fx.some(f => f.k === 'rocket' && f.target === k) || karts.some(o => o !== k && (o.starT > 0 || o.megaT > 0) && Math.abs(gapTo(o)) < 30) || k.itemWait < -6);
     if (go) { k.wantItem = true; k.itemWait = .5 + Math.random() * 1.2; }
@@ -4072,6 +4171,8 @@ function renderKart(k, dt) {
   // Ghost mode: see-through, flickering in the last second
   const ghostly = k.phaseT > 0 ? (k.phaseT < 1 && Math.sin(race.t * 26) > 0 ? .65 : .28) : 1;
   if (ghostly !== k.shownAlpha) setKartAlpha(k, ghostly);
+  k.balloon.visible = k.remote ? !!k.netBalloon : holdsBalloon(k);
+  if (k.balloon.visible) { k.balloon.rotation.z = Math.sin(race.t * 2.1 + k.slot) * .14 - k.steer * .12; k.balloon.rotation.x = .12 + Math.min(.35, Math.abs(k.v) * .01); }
   k.ice.visible = k.freezeT > 0;
   if (k.ice.visible) k.ice.material.opacity = k.freezeT < .6 && Math.sin(race.t * 30) > 0 ? .25 : .55;
   if (k.wasFrozen && k.freezeT <= 0) { burst(k.x, k.y + 1, k.z, 26, [.8, .95, 1]); if (k.isPlayer) sound.sfx('pop'); }
@@ -5173,9 +5274,9 @@ function onHostData(conn, d) {
 }
 
 function cleanFx(e, slot) {
-  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze', 'steal', 'stolen', 'ink', 'coin'].includes(e.k)) return null;
+  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze', 'steal', 'stolen', 'ink', 'coin', 'decoy'].includes(e.k)) return null;
   const num = (v, lim) => clamp(Number.isFinite(+v) ? +v : 0, -lim, lim);
-  return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 99)), item: Math.round(num(e.item ?? -1, 99)), uses: Math.round(num(e.uses ?? 1, 9)) };
+  return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 199)), yaw: num(e.yaw, 7), item: Math.round(num(e.item ?? -1, 99)), uses: Math.round(num(e.uses ?? 1, 9)) };
 }
 function netFx(e) {
   if (net.host) netBroadcast({ t: 'fx', e }); else netToHost({ t: 'fx', e });
@@ -5277,9 +5378,9 @@ function netFinished(k) {
   else netToHost({ t: 'fin' });
 }
 
-const SNAP_LEN = 21;
+const SNAP_LEN = 22;
 function netSnapshot(k) {
-  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2), round(k.freezeT, 2), round(k.phaseT, 2)];
+  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2), round(k.freezeT, 2), round(k.phaseT, 2), holdsBalloon(k) ? 1 : 0];
 }
 function netStore(k, snap) {
   if (!k?.remote || !Array.isArray(snap) || snap.length !== SNAP_LEN || !snap.every(Number.isFinite)) return;
@@ -5310,7 +5411,7 @@ function netInterpolate() {
     k.v = mix(5); k.steer = mix(6); k.drift = b[7]; k.driftT = b[8]; k.driftIn = k.drift ? Math.min(1, k.driftIn + .04) : 0;
     k.boostT = b[9]; k.hopY = Math.max(0, mix(10)); k.pitch = mix(11); k.total = b[12];
     k.spinT = clamp(b[13], 0, SPIN); k.starT = clamp(b[14], 0, 10); k.shieldT = clamp(b[15], 0, 15);
-    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME); k.freezeT = clamp(b[19], 0, FREEZE_TIME); k.phaseT = clamp(b[20], 0, PHASE_TIME);
+    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME); k.freezeT = clamp(b[19], 0, FREEZE_TIME); k.phaseT = clamp(b[20], 0, PHASE_TIME); k.netBalloon = b[21] > 0;
     // A short gap in the connection: keep rolling rather than stop dead
     const late = clamp(when - list[list.length - 1].at, 0, COAST_MS) / 1000;
     if (i === list.length - 1 && late > 0) { k.x += Math.sin(k.yaw) * k.v * late; k.z += Math.cos(k.yaw) * k.v * late; }
