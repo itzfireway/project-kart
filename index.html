@@ -2962,7 +2962,7 @@ function useItem(k) {
   if (!kind || k.roll > 0) return;
   if (--k.uses <= 0) k.item = null;
   if (kind === 'turbo' || kind === 'triple') k.boostT = Math.max(k.boostT, 1.4);
-  else if (kind === 'shield') k.shieldT = 12;
+  else if (kind === 'shield') k.shieldT = 10;
   else if (kind === 'star') { k.starT = 7; k.boostT = Math.max(k.boostT, .6); }
   else if (kind === 'mega') k.megaT = MEGA_TIME;
   else if (kind === 'oil') fire({ k: 'oil', slot: k.slot, x: k.x - Math.sin(k.yaw) * 2.9, z: k.z - Math.cos(k.yaw) * 2.9 });
@@ -4574,7 +4574,7 @@ const ITEM_GUIDE = {
   triple: ['Three turbos in one. Each press uses one.', 'Fire them one after another for a long boost, or save some for later.', 'If someone steals it, they get the turbos you have left.'],
   oil: ['Drops an oil slick behind you. Anyone who drives over it spins out. It stays on the road for 40 seconds.', 'Use it when someone is right behind you, or drop it on the racing line before a corner.', 'A shield, superstar, balloon or ghost mode gets through safely.'],
   rocket: ['A homing rocket that flies along the track after the racer one place ahead of you and spins them out.', 'Fire it when someone is just ahead of you. In 1st place it just flies forward.', 'A shield, superstar, balloon or ghost mode stops it. A decoy fools it.'],
-  shield: ['A bubble around your kart for 12 seconds. It blocks the next hit and then pops.', 'Turn it on when a rocket is coming, or before you drive past oil.', 'It only blocks one hit.'],
+  shield: ['A bubble around your kart for 10 seconds. It blocks the next hit and then pops.', 'Turn it on when a rocket is coming, or before you drive past oil.', 'It only blocks one hit.'],
   star: ['Superstar! For 7 seconds you go faster, can\'t be hurt, don\'t slow down on grass, and flatten any kart you touch.', 'Use it to catch up, or to barge through a crowd of karts.', 'Mostly comes to racers near the back.'],
   zap: ['Zaps every other racer. They spin out and go slower for 3.5 seconds.', 'Use it straight away to catch up with the pack.', 'Only racers near the back get it. A shield, superstar, balloon or ghost mode stops it.'],
   mega: ['Your kart grows big and heavy for 8 seconds. Driving into anyone knocks them aside and slows them down.', 'Use it when other karts are close by, then ram them.', 'A shield or balloon stops the knock. Superstars and other mega karts can\'t be knocked.'],
