@@ -62,6 +62,9 @@
   #big { position: absolute; top: 24%; left: 0; right: 0; text-align: center; font-size: 130px; font-weight: 900; color: #fff; -webkit-text-stroke: 3px #14161d; }
   #banner { position: absolute; top: 15%; left: 0; right: 0; text-align: center; font-size: 42px; text-transform: uppercase; opacity: 0; transition: opacity .25s; }
   #banner.on { opacity: 1; }
+  #hitBy { position: absolute; top: 31%; left: 0; right: 0; text-align: center; font-size: 24px; color: #fff; text-shadow: 0 2px 4px #000a; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #hitBy.on { opacity: 1; }
+  #hitBy b { color: #ffcf33; }
   #wrong { position: absolute; top: 38%; left: 0; right: 0; text-align: center; font-size: 44px; text-transform: uppercase; color: #ff5040; }
   #help { position: absolute; bottom: 20px; left: 0; right: 0; text-align: center; font-size: 15px; font-style: normal; font-weight: 600; }
   #map { position: fixed; inset: auto auto 16px 16px; width: 190px; height: 190px; cursor: default; }
@@ -180,6 +183,7 @@
   body.touch #big { font-size: 84px; -webkit-text-stroke: 2px #14161d; }
   body.touch #big.long { font-size: 40px; }
   body.touch #banner { font-size: 26px; }
+  body.touch #hitBy { font-size: 16px; top: 27%; }
   body.touch #wrong { font-size: 28px; }
   body.touch #help { bottom: auto; top: 58%; padding: 0 20px; font-size: 14px; }
   body.touch #map { inset: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) auto auto; width: 106px; height: 106px; }
@@ -333,6 +337,7 @@
 <div id="hud">
   <div id="lines"></div>
   <div id="flash"></div>
+  <div id="hitBy"></div>
   <canvas id="ink"></canvas>
   <div id="lights" hidden><i></i><i></i><i></i></div>
   <div id="item" hidden><span id="itemIcon"></span><small id="itemCount"></small><span id="itemName"></span></div>
@@ -3092,7 +3097,7 @@ function placeRocket(f) {
 function zapAll(owner) {
   for (const k of race.karts) {
     if (k === owner || k.remote || k.finish !== null) continue;
-    if (hit(k)) k.zapT = 3.5;
+    if (hit(k, owner, 'zap')) k.zapT = 3.5;
   }
   if (owner !== race.you) { flash('zap'); race.shake = .35; }
   sound.sfx('zap');
@@ -3119,9 +3124,11 @@ function freezeFx(owner, k) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
     if (k.isPlayer) sound.sfx('pop');
+    showHitBy(k, owner, 'freeze', true);
     return;
   }
-  if (popBalloon(k)) return;
+  if (popBalloon(k)) { showHitBy(k, owner, 'freeze', true); return; }
+  showHitBy(k, owner, 'freeze');
   k.freezeT = FREEZE_TIME; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0; k.trickB = 0;
   if (k.isPlayer) { race.shake = .4; flash('freeze'); buzz([80, 40, 80]); }
 }
@@ -3137,13 +3144,16 @@ function stealFx(owner, k) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
     if (k.isPlayer) sound.sfx('pop');
+    showHitBy(k, owner, 'steal', true);
     return;
   }
-  if (popBalloon(k)) return;
+  if (popBalloon(k)) { showHitBy(k, owner, 'steal', true); return; }
   let item = null, uses = 0;
   if (k.item && k.roll <= 0) { item = k.item; uses = k.uses; k.item = null; k.uses = 0; }
   else if (k.item2 && k.roll2 <= 0) { item = k.item2; uses = k.uses2; k.item2 = null; k.uses2 = 0; }
   if (!item) return;
+  showHitBy(k, owner, 'steal');
+  if (k.isPlayer) $('hitBy').innerHTML = `<b>${esc(owner.name)}</b> stole your ${ITEMS[item].icon} ${ITEMS[item].name}`;
   burst(k.x, k.y + 1.4, k.z, 22, [.95, .3, .35]);
   if (k.isPlayer) { race.shake = .3; flash('hit'); buzz([50, 30, 50]); }
   fire({ k: 'stolen', slot: k.slot, target: owner.slot, item: ITEM_KEYS.indexOf(item), uses });
@@ -3169,7 +3179,7 @@ function inkAll(owner, from) {
   for (const k of race.karts) {
     if (k === owner || k.remote || k.finish !== null || k.total <= s || k.phaseT > 0) continue;
     k.inkT = INK_TIME;
-    if (k.isPlayer) { splatInk(); buzz([40, 30, 40, 30, 60]); }
+    if (k.isPlayer) { splatInk(); buzz([40, 30, 40, 30, 60]); showHitBy(k, owner, 'ink'); }
   }
 }
 // Draws big random ink blobs over the screen. They cover most of it, with a few small gaps to peek through.
@@ -3195,32 +3205,50 @@ function splatInk() {
   for (let i = 0; i < 6; i++) { x.beginPath(); x.ellipse(W * Math.random(), H * Math.random(), S * .05, S * .025, Math.random() * 3, 0, 7); x.fill(); }
 }
 
+// Tells you on screen who got you and with which item (only for your own kart)
+let hitByTimer;
+function showHitBy(k, by, id, blocked) {
+  if (!k || !k.isPlayer || !by || !ITEMS[id] || race.over) return;
+  const it = `${ITEMS[id].icon} ${ITEMS[id].name}`;
+  const el = $('hitBy');
+  el.innerHTML = by === k ? (blocked ? `Blocked your own ${it}` : `Your own ${it} got you`)
+    : blocked ? `Blocked <b>${esc(by.name)}</b>'s ${it}` : `<b>${esc(by.name)}</b> hit you with ${it}`;
+  el.className = 'on';
+  clearTimeout(hitByTimer);
+  hitByTimer = setTimeout(() => { el.className = ''; }, 2500);
+}
+
 // Spins a kart out. Returns false if a shield or superstar saved it.
-function hit(k) {
+// by and id (who and which item) are only for the message on screen.
+function hit(k, by, id) {
   if (k.starT > 0 || k.spinT > 0 || k.phaseT > 0) return false;
   if (k.shieldT > 0) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
     if (k.isPlayer) sound.sfx('pop');
+    showHitBy(k, by, id, true);
     return false;
   }
-  if (popBalloon(k)) return false;
+  if (popBalloon(k)) { showHitBy(k, by, id, true); return false; }
+  showHitBy(k, by, id);
   k.spinT = SPIN; k.v *= .4; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0;
   if (k.isPlayer) { race.shake = .6; flash('hit'); sound.sfx('bonk'); buzz([60, 40, 90]); }
   return true;
 }
 
 // A mega kart rams k: it's shoved away (along nx, nz), hops a little, and is slowed for a couple of seconds
-function knock(k, nx, nz) {
+function knock(k, nx, nz, by) {
   if (k.knockCD > 0 || k.starT > 0 || k.megaT > 0 || k.finish !== null) return;
   k.knockCD = 1;
-  if (popBalloon(k)) return;
+  if (popBalloon(k)) { showHitBy(k, by, 'mega', true); return; }
   if (k.shieldT > 0) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
     if (k.isPlayer) sound.sfx('pop');
+    showHitBy(k, by, 'mega', true);
     return;
   }
+  showHitBy(k, by, 'mega');
   // Always shove sideways (away from the mega kart), so a hit from behind never pushes them forward
   const rx = Math.cos(k.yaw), rz = -Math.sin(k.yaw), side = nx * rx + nz * rz >= 0 ? 1 : -1;
   k.kx = rx * side * 17; k.kz = rz * side * 17; k.slowT = SLOW_TIME; k.v *= .7;
@@ -3287,7 +3315,7 @@ function stepFx(h) {
       if (k === f.owner && (f.k === 'rocket' || f.age < 1.2) || k.phaseT > 0) continue;
       const dx = k.x - f.x, dz = k.z - f.z;
       if (dx * dx + dz * dz > (f.k === 'rocket' ? 5.8 : 4.6)) continue;
-      if (!k.remote) hit(k);
+      if (!k.remote) hit(k, f.owner, f.k);
       if (f.k === 'rocket' && near(f, 120)) { burst(f.x, f.y, f.z, 40, [1, .55, .15]); sound.sfx('boom', k.isPlayer ? 1 : .5); if (k.isPlayer) flash('boom'); }
       gone = true;
       break;
@@ -3755,8 +3783,8 @@ function bumpKarts(h) {
     // A mega kart knocks whoever it touches (each browser only decides this for the karts it drives)
     if ((a.megaT > 0) !== (b.megaT > 0) && d2 < MEGA_REACH * MEGA_REACH) {
       const d = Math.sqrt(d2), nx = dx / d, nz = dz / d;
-      if (a.megaT > 0 && !b.remote) knock(b, nx, nz);
-      if (b.megaT > 0 && !a.remote) knock(a, -nx, -nz);
+      if (a.megaT > 0 && !b.remote) knock(b, nx, nz, a);
+      if (b.megaT > 0 && !a.remote) knock(a, -nx, -nz, b);
     }
     if (d2 > rr * rr) continue;
     const ma = a.mass * (a.megaT > 0 ? 5 : 1), mb = b.mass * (b.megaT > 0 ? 5 : 1);
@@ -3766,8 +3794,8 @@ function bumpKarts(h) {
     a.x -= nx * o * mb / sum; a.z -= nz * o * mb / sum;
     b.x += nx * o * ma / sum; b.z += nz * o * ma / sum;
     // A superstar flattens whoever it touches
-    if (a.starT > 0 && b.starT <= 0 && !b.remote) hit(b);
-    if (b.starT > 0 && a.starT <= 0 && !a.remote) hit(a);
+    if (a.starT > 0 && b.starT <= 0 && !b.remote) hit(b, a, 'star');
+    if (b.starT > 0 && a.starT <= 0 && !a.remote) hit(a, b, 'star');
     if (a.isPlayer || b.isPlayer) race.shake = Math.max(race.shake, .15);
   }
 }
