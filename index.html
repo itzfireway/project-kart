@@ -62,7 +62,8 @@
   #big { position: absolute; top: 24%; left: 0; right: 0; text-align: center; font-size: 130px; font-weight: 900; color: #fff; -webkit-text-stroke: 3px #14161d; }
   #banner { position: absolute; top: 15%; left: 0; right: 0; text-align: center; font-size: 42px; text-transform: uppercase; opacity: 0; transition: opacity .25s; }
   #banner.on { opacity: 1; }
-  #hitBy { position: absolute; top: 31%; left: 0; right: 0; text-align: center; font-size: 24px; color: #fff; text-shadow: 0 2px 4px #000a; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #hitBy { position: absolute; top: 31%; left: 0; right: 0; text-align: center; font-size: 24px; color: #fff; text-shadow: 0 2px 4px #000a; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 2; }
+  #hitBy span { display: inline-block; padding: 4px 14px; border-radius: 10px; background: rgba(20, 22, 29, .55); -webkit-text-stroke: .5px #000; }
   #hitBy.on { opacity: 1; }
   #hitBy b { color: #ffcf33; }
   #wrong { position: absolute; top: 38%; left: 0; right: 0; text-align: center; font-size: 44px; text-transform: uppercase; color: #ff5040; }
@@ -397,13 +398,14 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-24.2';
+const BUILD = '2026-11-24.3';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['24 Nov 2026', [
     'When someone hits you with an item, it shows who did it and with what',
     'When you hit someone, it shows who you hit and with what',
+    'The hit message shows on top of ink',
     'Shield lasts 10 seconds (was 12)',
     'Balloon is rarer',
   ]],
@@ -3163,7 +3165,7 @@ function stealFx(owner, k) {
   else if (k.item2 && k.roll2 <= 0) { item = k.item2; uses = k.uses2; k.item2 = null; k.uses2 = 0; }
   if (!item) return;
   showHitBy(k, owner, 'steal');
-  if (k.isPlayer) $('hitBy').innerHTML = `<b>${esc(owner.name)}</b> stole your ${ITEMS[item].icon} ${ITEMS[item].name}`;
+  if (k.isPlayer) hitMsg(`<b>${esc(owner.name)}</b> stole your ${itemLabel(item)}`);
   burst(k.x, k.y + 1.4, k.z, 22, [.95, .3, .35]);
   if (k.isPlayer) { race.shake = .3; flash('hit'); buzz([50, 30, 50]); }
   fire({ k: 'stolen', slot: k.slot, target: owner.slot, item: ITEM_KEYS.indexOf(item), uses });
@@ -3222,7 +3224,7 @@ let hitByTimer, myHits = null;
 function hitMsg(html) {
   if (race.over) return;
   const el = $('hitBy');
-  el.innerHTML = html;
+  el.innerHTML = `<span>${html}</span>`;
   el.className = 'on';
   clearTimeout(hitByTimer);
   hitByTimer = setTimeout(() => { el.className = ''; }, 2500);
