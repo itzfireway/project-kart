@@ -398,7 +398,7 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-24.3';
+const BUILD = '2026-11-24.4';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
@@ -406,6 +406,7 @@ const UPDATES = [
     'When someone hits you with an item, it shows who did it and with what',
     'When you hit someone, it shows who you hit and with what',
     'The hit message shows on top of ink',
+    'The game updates itself properly when there\'s a new version',
     'Shield lasts 10 seconds (was 12)',
     'Balloon is rarer',
   ]],
@@ -518,7 +519,8 @@ const UPDATES = [
     const latest = (await res.text()).match(/const BUILD = '([^']+)'/)?.[1];
     if (!latest || latest === BUILD || sessionStorage.getItem('kart-reloaded') === latest) return;
     sessionStorage.setItem('kart-reloaded', latest);
-    if (!race && !net.room) location.reload();
+    // Reload at a new address (?v=newest build) so the browser can't hand back its saved old copy again
+    if (!race && !net.room) { const u = new URL(location.href); u.searchParams.set('v', latest); location.replace(u); }
   } catch (e) {}
 })();
 const V3 = THREE.Vector3;
