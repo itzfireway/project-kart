@@ -397,12 +397,13 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-24.1';
+const BUILD = '2026-11-24.2';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['24 Nov 2026', [
     'When someone hits you with an item, it shows who did it and with what',
+    'When you hit someone, it shows who you hit and with what',
     'Shield lasts 10 seconds (was 12)',
     'Balloon is rarer',
   ]],
@@ -3010,6 +3011,10 @@ function spawnFx(e) {
   if (e.k === 'stolen') { stolenFx(owner, race.karts.find(k => k.slot === e.target) || null, e.item, e.uses); return; }
   if (e.k === 'ink') { inkAll(owner, e.s); return; }
   if (e.k === 'coin') { coinFx(owner); return; }
+  if (e.k === 'landed') {
+    if (race.karts.find(k => k.slot === e.target) === race.you && ITEM_KEYS[e.item]) showMyHit(owner, ITEM_KEYS[e.item], !!e.uses);
+    return;
+  }
   const fx = { k: e.k, owner, age: 0, x: e.x, y: 0, z: e.z, i: 0 };
   if (e.k === 'oil') {
     const n = nearestAny(e.x, e.z), l = locate(e.x, e.z, n.i, 8);
@@ -3173,7 +3178,7 @@ function stolenFx(victim, k, item, uses) {
   if (!k.item) { k.item = id; k.uses = uses; k.roll = 0; k.itemWait = .6 + Math.random() * 1.5; }
   else if (!k.item2) { k.item2 = id; k.uses2 = uses; k.roll2 = 0; }
   else return;
-  if (k.isPlayer) sound.sfx('got');
+  if (k.isPlayer) { sound.sfx('got'); if (victim && victim !== k) hitMsg(`You stole <b>${esc(victim.name)}</b>'s ${itemLabel(id)}`); }
 }
 // Ink: every kart but the one that used it gets ink splattered over its view for a few seconds
 // Ink only hits karts ahead of whoever used it in the race order (further round the track at the moment it was used)
@@ -3211,16 +3216,42 @@ function splatInk() {
 }
 
 // Tells you on screen who got you and with which item (only for your own kart)
-let hitByTimer;
-function showHitBy(k, by, id, blocked) {
-  if (!k || !k.isPlayer || !by || !ITEMS[id] || race.over) return;
-  const it = `${ITEMS[id].icon} ${ITEMS[id].name}`;
+// Runs on the browser that drives the victim k. If you're the one who got hit you see who did it; if you're the one
+// who hit them you see that too (online, the victim's browser sends a 'landed' message to the attacker's browser).
+let hitByTimer, myHits = null;
+function hitMsg(html) {
+  if (race.over) return;
   const el = $('hitBy');
-  el.innerHTML = by === k ? (blocked ? `Blocked your own ${it}` : `Your own ${it} got you`)
-    : blocked ? `Blocked <b>${esc(by.name)}</b>'s ${it}` : `<b>${esc(by.name)}</b> hit you with ${it}`;
+  el.innerHTML = html;
   el.className = 'on';
   clearTimeout(hitByTimer);
   hitByTimer = setTimeout(() => { el.className = ''; }, 2500);
+}
+const itemLabel = id => `${ITEMS[id].icon} ${ITEMS[id].name}`;
+function showHitBy(k, by, id, blocked) {
+  if (!k || !by || !ITEMS[id]) return;
+  const it = itemLabel(id);
+  if (k.isPlayer) {
+    hitMsg(by === k ? (blocked ? `Blocked your own ${it}` : `Your own ${it} got you`)
+      : blocked ? `Blocked <b>${esc(by.name)}</b>'s ${it}` : `<b>${esc(by.name)}</b> hit you with ${it}`);
+  }
+  if (by === k || id === 'steal' && !blocked) return;   // a successful steal is announced by stolenFx
+  if (by === race.you) showMyHit(k, id, blocked);
+  else if (by.remote && race.online) netFx({ k: 'landed', slot: k.slot, target: by.slot, item: ITEM_KEYS.indexOf(id), uses: blocked ? 1 : 0 });
+}
+// You hit someone. Hits with the same item close together (a zap or ink hitting lots of racers) go in one message.
+function showMyHit(victim, id, blocked) {
+  if (!victim || !ITEMS[id]) return;
+  const now = performance.now();
+  if (!myHits || myHits.id !== id || now - myHits.at > 600) myHits = { id, at: now, hit: [], blocked: [] };
+  myHits.at = now;
+  const list = blocked ? myHits.blocked : myHits.hit;
+  if (!list.includes(victim.name)) list.push(victim.name);
+  const names = l => l.map(n => `<b>${esc(n)}</b>`).join(', '), it = itemLabel(id);
+  const parts = [];
+  if (myHits.hit.length) parts.push(`You hit ${names(myHits.hit)} with ${it}`);
+  if (myHits.blocked.length) parts.push(`${names(myHits.blocked)} blocked your ${it}`);
+  hitMsg(parts.join('<br>'));
 }
 
 // Spins a kart out. Returns false if a shield or superstar saved it.
@@ -5372,7 +5403,7 @@ function onHostData(conn, d) {
 }
 
 function cleanFx(e, slot) {
-  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze', 'steal', 'stolen', 'ink', 'coin', 'decoy'].includes(e.k)) return null;
+  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze', 'steal', 'stolen', 'ink', 'coin', 'decoy', 'landed'].includes(e.k)) return null;
   const num = (v, lim) => clamp(Number.isFinite(+v) ? +v : 0, -lim, lim);
   return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 199)), yaw: num(e.yaw, 7), item: Math.round(num(e.item ?? -1, 99)), uses: Math.round(num(e.uses ?? 1, 9)) };
 }
