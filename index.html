@@ -94,6 +94,16 @@
   #charge { display: block; height: 100%; width: 0; }
   #overlay { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 12, 18, .55); }
   #overlay.show { display: flex; }
+  #watch { color: #14161d; background: #ffcf33 !important; border: 0 !important; }
+  #spec { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 8px; padding: 8px; max-width: calc(100vw - 24px); background: rgba(16, 18, 26, .82); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px); }
+  #spec[hidden] { display: none; }
+  #spec button { flex: none; min-width: 44px; height: 44px; padding: 0 12px; font-size: 16px; font-weight: 800; background: rgba(255, 255, 255, .08); border: 1px solid var(--line); border-radius: 10px; }
+  #spec #specDone { font-size: 14px; color: #14161d; background: var(--hot); border: 0; }
+  #specInfo { display: flex; flex-direction: column; align-items: center; min-width: 120px; padding: 0 4px; line-height: 1.2; }
+  #specInfo small { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  #specInfo b { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; }
+  #specInfo span { font-size: 13px; color: var(--dim); }
+  body.spectating #pads, body.spectating #item, body.spectating #item2, body.spectating #dash { display: none !important; }
   .card { width: min(440px, 100%); padding: 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px); }
   .card h3 { margin: 0 0 12px; font-size: 32px; font-weight: 900; font-style: italic; text-transform: uppercase; color: var(--hot); }
   .card table { width: 100%; margin-bottom: 14px; border-collapse: collapse; font-size: 15px; font-variant-numeric: tabular-nums; }
@@ -414,9 +424,16 @@
 <div id="overlay"><div class="card">
   <div id="overlayBody"></div>
   <button id="resume" hidden>Resume</button>
+  <button id="watch" hidden>&#128064; Watch the race</button>
   <button id="again">Race again</button>
   <button id="quit">Back to garage</button>
 </div></div>
+<div id="spec" hidden>
+  <button id="specPrev" aria-label="Watch the racer ahead">&#9664;</button>
+  <div id="specInfo"><small>Watching</small><b id="specName"></b><span id="specMeta"></span></div>
+  <button id="specNext" aria-label="Watch the racer behind">&#9654;</button>
+  <button id="specDone">&#127937; Results</button>
+</div>
 
 <div id="padEdit">
   <b>Drag the controls anywhere</b>
@@ -446,11 +463,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-27.4';
+const BUILD = '2026-11-27.5';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['27 Nov 2026', [
+    'Grand Prix: after you finish a race, tap 👀 Watch the race to follow the racers still driving. ◀ ▶ (or the arrow keys) switch who you watch, Results takes you back',
     'Balloon is now a Water balloon 🎈: throw it at the racer ahead and the splash soaks everyone nearby (slower and slippery for a moment). It no longer protects you',
     'Easier menu: tabs for Race, Kart, Friends and More, with Start always at the top',
     'Sign in with Google (top of the menu) to save all your progress to your account: your kart, name, settings, phone controls, time trial records and ghosts, and your Grand Prix. Sign in on another device and it all comes with you',
@@ -3663,6 +3681,7 @@ function leaveRace() {
   }
   sound.stop();
   $('ink').style.opacity = 0;
+  $('spec').hidden = true; document.body.classList.remove('spectating');
   document.body.classList.remove('racing');
   $('overlay').className = '';
   $('big').textContent = '';
@@ -4086,6 +4105,68 @@ function finishPlayer() {
   setTimeout(() => { if (race === r) { $('big').textContent = ''; $('overlay').className = 'show'; drawResults(); } }, 1800);
 }
 
+// ---------- Spectating ----------
+// After you finish a Grand Prix race, Watch the race follows the racers still driving (friends first). ◀ ▶ or the
+// arrow keys pick who; when they finish it moves on to the next one, and once everyone's in, the results come back.
+const stillRacing = () => race ? ranking().filter(k => k.finish === null && !k.isPlayer) : [];
+const canWatch = () => !!(race && race.gp && race.over && !race.tt && stillRacing().length);
+function watchKart(k) {
+  const r = race;
+  r.spec = k; r.specDoneAt = 0;
+  r.camYaw = k.moveYaw;
+  r.camX = k.x - Math.sin(k.moveYaw) * 8; r.camZ = k.z - Math.cos(k.moveYaw) * 8; r.camY = k.y + 3.4;
+  drawSpec();
+}
+function startWatching() {
+  const list = stillRacing();
+  if (!list.length) return;
+  $('overlay').className = '';
+  document.body.classList.add('spectating');
+  $('spec').hidden = false;
+  watchKart(list.find(k => k.remote) || list[0]);
+}
+function stopWatching() {
+  if (!race) return;
+  race.spec = null;
+  $('spec').hidden = true;
+  document.body.classList.remove('spectating');
+  if (race.over) { $('overlay').className = 'show'; drawResults(); }
+}
+// ◀ is the racer ahead, ▶ the racer behind
+function cycleSpec(d) {
+  const list = stillRacing();
+  if (!race?.spec || !list.length) return;
+  const i = list.indexOf(race.spec);
+  watchKart(list[i < 0 ? 0 : (i + d + list.length) % list.length]);
+}
+function drawSpec() {
+  const r = race, k = r.spec;
+  if (!k) return;
+  const place = ranking().indexOf(k) + 1, lap = clamp(Math.floor(k.total / N) + 1, 1, r.laps);
+  $('specName').textContent = k.name;
+  $('specMeta').textContent = k.finish !== null ? `Finished ${ordinal(place)}!` : `${ordinal(place)} · Lap ${lap} of ${r.laps}`;
+  const more = stillRacing().length > (k.finish === null ? 1 : 0);
+  $('specPrev').disabled = $('specNext').disabled = !more;
+  $('specPrev').style.opacity = $('specNext').style.opacity = more ? '' : .4;
+}
+function stepSpec(r) {
+  const k = r.spec;
+  if (!r.karts.includes(k)) { stopWatching(); return; }
+  // Stay on them for a moment after they cross the line, then move on to someone still racing
+  if (k.finish !== null) {
+    if (!r.specDoneAt) { r.specDoneAt = r.t; burst(k.x, k.y + 2.5, k.z, 30); }
+    if (r.t - r.specDoneAt > 2.5) {
+      const list = stillRacing();
+      if (list.length) watchKart(list[0]); else { stopWatching(); return; }
+    }
+  }
+  drawSpec();
+}
+$('watch').onclick = startWatching;
+$('specPrev').onclick = () => cycleSpec(-1);
+$('specNext').onclick = () => cycleSpec(1);
+$('specDone').onclick = stopWatching;
+
 function setBig(text) {
   const b = $('big');
   if (b.textContent === String(text)) return;
@@ -4147,6 +4228,7 @@ function drawResults() {
   $('overlayBody').innerHTML = `<h3>${MEDALS[place - 1] || ''} ${head}</h3>${bestLine}<table>${rows}</table>${race.gp ? gpTable() : ''}`;
   saveCupAfterRace();
   $('resume').hidden = true;
+  $('watch').hidden = !canWatch();
   $('again').hidden = race.online && !net.host;
   const nextGp = race.gp && race.gp.round + 1 < GP_TRACKS.length ? TRACKS[race.gp.order[race.gp.round + 1]] : null;
   $('again').textContent = !race.gp ? 'Race again' : nextGp ? `Next race: ${nextGp.icon} ${nextGp.name}` : 'New Grand Prix';
@@ -4318,6 +4400,7 @@ function drawHud() {
   $('charge').style.background = you.driftT > 1.7 ? '#ff8a1f' : you.driftT > .75 ? '#39b6ff' : '#cfd3dc';
   const board = r.tt ? ttBoard(you, r) : order.map((k, i) => `<li class="${k.isPlayer ? 'me' : ''}">${i + 1} ${esc(k.name)}</li>`).join('');
   if (board !== r.board) $('board').innerHTML = r.board = board;
+  if (r.spec) stepSpec(r);
   if (r.t < 0) setBig(r.t > -3 ? Math.ceil(-r.t) : '');
   else if (r.t < (r.launchMsg ? 1.4 : 1) && !r.over) setBig(r.launchMsg || 'GO!');
   else if (!r.over && $('big').textContent === (r.launchMsg || 'GO!')) setBig('');
@@ -4425,10 +4508,10 @@ function renderKart(k, dt) {
 }
 
 function placeRaceCam(dt) {
-  const r = race, k = r.you;
+  const r = race, k = r.spec || r.you, orbit = r.over && !r.spec;   // after the finish the camera circles you, unless you're watching someone
   r.camYaw += wrapA(k.moveYaw - r.camYaw) * Math.min(1, dt * 5.5);
-  if (r.over) r.camYaw += dt * .55;
-  const big = (k.megaS || 1) - 1, back = r.over ? 9 : 7.4 + Math.abs(k.v) * .03 + big * 4.5, up = r.over ? 3.2 : 3.3 + big * 2.2;
+  if (orbit) r.camYaw += dt * .55;
+  const big = (k.megaS || 1) - 1, back = orbit ? 9 : 7.4 + Math.abs(k.v) * .03 + big * 4.5, up = orbit ? 3.2 : 3.3 + big * 2.2;
   const wantX = k.x - Math.sin(r.camYaw) * back, wantZ = k.z - Math.cos(r.camYaw) * back;
   const q = Math.min(1, dt * 14);
   r.camX += (wantX - r.camX) * q; r.camZ += (wantZ - r.camZ) * q;
@@ -4766,6 +4849,12 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
+  if (race.spec) {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') cycleSpec(-1);
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') cycleSpec(1);
+    if (e.code === 'Escape' || e.code === 'Enter') stopWatching();
+    return;
+  }
   if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
   if (e.code === 'KeyM') toggleSound();
   if (e.code === 'KeyR') backOnTrack();
