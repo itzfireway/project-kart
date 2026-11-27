@@ -44,7 +44,16 @@
   #start { width: 100%; padding: 13px; font-size: 18px; font-weight: 900; font-style: italic; text-transform: uppercase; color: #14161d; background: var(--hot); border: 0; border-radius: 10px; }
   #start:hover { filter: brightness(1.08); }
   #continueGp { width: 100%; margin-top: 8px; padding: 11px; font-size: 15px; font-weight: 800; color: #14161d; background: #ffcf33; border: 0; border-radius: 10px; }
-  #cloud { margin-top: 10px; }
+  #panel { padding-top: 0; }
+  #panelTop { position: sticky; top: 0; z-index: 2; margin: 0 -16px; padding: 16px 16px 0; background: var(--panel); border-bottom: 1px solid var(--line); backdrop-filter: blur(14px); }
+  #tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 10px; }
+  #tabs button { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 0 8px; font-size: 12px; font-weight: 700; color: var(--dim); background: none; border: 0; border-bottom: 3px solid transparent; }
+  #tabs button i { font-style: normal; font-size: 17px; }
+  #tabs button:hover { color: var(--text); }
+  #tabs button[aria-selected=true] { color: var(--text); border-bottom-color: var(--hot); }
+  .tabPage { padding-top: 4px; }
+  .tabPage:not(.on) { display: none !important; }
+  .tabPage > h2:first-child, .tabPage > #netPanel:first-child > h2:first-child { margin-top: 14px; }
   #cloudBtn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 10px; font-size: 14px; font-weight: 700; color: #1f1f1f; background: #fff; border: 0; border-radius: 10px; }
   #cloudBtn:hover { filter: brightness(.95); }
   #cloudBtn svg { width: 18px; height: 18px; flex: none; }
@@ -257,9 +266,9 @@
     .card td { padding: 0 6px; }
     .card button { margin-top: 0; padding: 7px; font-size: 13px; }
   }
-  #logBtn { width: 100%; margin-top: 22px; padding: 9px; font-size: 13px; font-weight: 700; color: var(--dim); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
+  #logBtn { width: 100%; margin-top: 8px; padding: 9px; font-size: 13px; font-weight: 700; color: var(--dim); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
   #logBtn:hover, #guideBtn:hover { color: var(--text); }
-  #guideBtn { width: 100%; margin-top: 8px; padding: 9px; font-size: 13px; font-weight: 700; color: var(--dim); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
+  #guideBtn { width: 100%; margin-top: 0; padding: 9px; font-size: 13px; font-weight: 700; color: var(--dim); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 9px; }
   #guide { display: none; position: fixed; inset: 0; z-index: 20; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 12, 18, .6); }
   #guide.show { display: flex; }
   #guide .card { width: min(480px, 100%); max-height: 100%; display: flex; flex-direction: column; }
@@ -290,67 +299,86 @@
 <body>
 <h1>Project <span>Kart</span></h1>
 <aside id="panel">
-  <button id="start">Start race</button>
-  <button id="continueGp" hidden></button>
-  <div id="cloud">
-    <button id="cloudBtn"><svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 2.9-2.2 5.4-4.7 7.1l7.6 5.9c4.4-4.1 6.9-10.1 6.9-17.5z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.2 0-11.5-4.2-13.4-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>Sign in with Google</button>
-    <div id="cloudIn" hidden><span>&#9729;&#65039;</span><b id="cloudName"></b><button id="cloudOut">Sign out</button></div>
-    <p id="cloudMsg">Save your kart, records and Grand Prix to your Google account, on every device</p>
+  <div id="panelTop">
+    <button id="start">Start race</button>
+    <button id="continueGp" hidden></button>
+    <nav id="tabs">
+      <button data-tab="race"><i>&#127937;</i>Race</button>
+      <button data-tab="kart"><i>&#127950;&#65039;</i>Kart</button>
+      <button data-tab="friends"><i>&#128101;</i>Friends</button>
+      <button data-tab="more"><i>&#9881;&#65039;</i>More</button>
+    </nav>
   </div>
-  <div id="netPanel">
-    <h2>Race friends</h2>
-      <label>Your name <input type="text" id="netName" maxlength="12" autocomplete="off" spellcheck="false"></label>
-    <div id="netMenu">
-      <button id="netCreate">Create room</button>
-      <div class="netRow"><input type="text" id="netCode" placeholder="Room code" maxlength="8" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="netJoin">Join</button></div>
+  <section class="tabPage" data-tab="race">
+    <h2>Mode</h2>
+    <div class="levels" id="modes"></div>
+    <p class="hostNote" id="gpNote" hidden>Race all five tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
+    <h2>Track</h2>
+    <div class="bodies" id="tracks"></div>
+    <h2>Laps</h2>
+    <div class="levels" id="laps"></div>
+    <h2>Weather</h2>
+    <div class="levels" id="weather"></div>
+    <h2>Lucky blocks</h2>
+    <label>Items on the track <input type="checkbox" id="itemsBox" checked></label>
+    <p class="hostNote" id="hostNote" hidden>In a room, the host's mode, track, laps, weather and lucky blocks are used.</p>
+    <h2>CPU level</h2>
+    <div class="levels" id="levels"></div>
+  </section>
+  <section class="tabPage" data-tab="kart">
+    <h2>Kart</h2>
+    <p class="hostNote" id="ttKartNote" hidden>Time trial is Sprint only, so everyone's times are fair.</p>
+    <div class="bodies" id="bodies"></div>
+    <h2>Stats</h2>
+    <div id="stats"></div>
+    <h2>Paint</h2>
+    <div class="swatches" id="swatches"></div>
+    <div class="mixTabs"><button id="mixBody" aria-pressed="true"><i></i>Primary</button><button id="mixAccent" aria-pressed="false"><i></i>Secondary</button></div>
+    <canvas id="wheel" width="340" height="340" aria-label="Colour wheel"></canvas>
+    <label>Brightness <input type="range" id="wheelV" min="0" max="100" value="100"></label>
+    <h2>Number</h2>
+    <label>Race number <input type="number" id="number" min="0" max="99" value="7"></label>
+    <h2>View</h2>
+    <div class="views" id="views"></div>
+  </section>
+  <section class="tabPage" data-tab="friends">
+    <div id="netPanel">
+      <h2>Race friends</h2>
+        <label>Your name <input type="text" id="netName" maxlength="12" autocomplete="off" spellcheck="false"></label>
+      <div id="netMenu">
+        <button id="netCreate">Create room</button>
+        <div class="netRow"><input type="text" id="netCode" placeholder="Room code" maxlength="8" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="netJoin">Join</button></div>
+      </div>
+      <div id="netRoom" hidden>
+        <div class="netRow"><div id="netRoomCode">Room code <b id="netCodeShow"></b></div><button id="netShare">Invite</button></div>
+        <ol id="netPlayers"></ol>
+        <label id="netCpuRow">Fill grid with CPUs <input type="checkbox" id="netCpu" checked></label>
+        <button id="netLeave">Leave room</button>
+      </div>
+      <p id="netMsg"></p>
     </div>
-    <div id="netRoom" hidden>
-      <div class="netRow"><div id="netRoomCode">Room code <b id="netCodeShow"></b></div><button id="netShare">Invite</button></div>
-      <ol id="netPlayers"></ol>
-      <label id="netCpuRow">Fill grid with CPUs <input type="checkbox" id="netCpu" checked></label>
-      <button id="netLeave">Leave room</button>
+  </section>
+  <section class="tabPage" data-tab="more">
+    <h2>Account</h2>
+    <div id="cloud">
+      <button id="cloudBtn"><svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 2.9-2.2 5.4-4.7 7.1l7.6 5.9c4.4-4.1 6.9-10.1 6.9-17.5z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.2 0-11.5-4.2-13.4-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>Sign in with Google</button>
+      <div id="cloudIn" hidden><span>&#9729;&#65039;</span><b id="cloudName"></b><button id="cloudOut">Sign out</button></div>
+      <p id="cloudMsg">Save your kart, records and Grand Prix to your Google account, on every device</p>
     </div>
-    <p id="netMsg"></p>
-  </div>
-  <h2>Mode</h2>
-  <div class="levels" id="modes"></div>
-  <p class="hostNote" id="gpNote" hidden>Race all five tracks in a row. Points for every place: 15, 12, 10, 8, 6, 4, 2, 1. Most points wins the cup!</p>
-  <h2>Track</h2>
-  <div class="bodies" id="tracks"></div>
-  <h2>Laps</h2>
-  <div class="levels" id="laps"></div>
-  <h2>Weather</h2>
-  <div class="levels" id="weather"></div>
-  <h2>Race options</h2>
-  <label>Lucky blocks <input type="checkbox" id="itemsBox" checked></label>
-  <label>Music <input type="checkbox" id="musicBox" checked></label>
-  <p class="hostNote" id="hostNote" hidden>In a room, the host's mode, track, laps, weather and lucky blocks are used.</p>
-  <h2>CPU level</h2>
-  <div class="levels" id="levels"></div>
-  <h2>Kart</h2>
-  <p class="hostNote" id="ttKartNote" hidden>Time trial is Sprint only, so everyone's times are fair.</p>
-  <div class="bodies" id="bodies"></div>
-  <h2>Stats</h2>
-  <div id="stats"></div>
-  <h2>Paint</h2>
-  <div class="swatches" id="swatches"></div>
-  <div class="mixTabs"><button id="mixBody" aria-pressed="true"><i></i>Primary</button><button id="mixAccent" aria-pressed="false"><i></i>Secondary</button></div>
-  <canvas id="wheel" width="340" height="340" aria-label="Colour wheel"></canvas>
-  <label>Brightness <input type="range" id="wheelV" min="0" max="100" value="100"></label>
-  <h2>Number</h2>
-  <label>Race number <input type="number" id="number" min="0" max="99" value="7"></label>
-  <h2 class="touchOnly">Phone controls</h2>
-  <div class="levels touchOnly" id="steerStyles"></div>
-  <p class="touchOnly" id="ctlMsg"></p>
-  <button class="wideBtn touchOnly" id="editPadsBtn">&#9995; Move &amp; resize controls</button>
-  <h2>View</h2>
-  <div class="views" id="views"></div>
-  <h2 class="devOnly">Test</h2>
-  <label class="devOnly">Steer <input type="range" id="steer" min="-1" max="1" step=".01" value="0"></label>
-  <label class="devOnly">Spin wheels <input type="checkbox" id="spin"></label>
-  <label class="devOnly">Turntable <input type="checkbox" id="turn" checked></label>
-  <button id="logBtn">&#128220; Update log</button>
-  <button id="guideBtn">&#127873; Item guide</button>
+    <h2>Sound</h2>
+    <label>Music <input type="checkbox" id="musicBox" checked></label>
+    <h2 class="touchOnly">Phone controls</h2>
+    <div class="levels touchOnly" id="steerStyles"></div>
+    <p class="touchOnly" id="ctlMsg"></p>
+    <button class="wideBtn touchOnly" id="editPadsBtn">&#9995; Move &amp; resize controls</button>
+    <h2>Help</h2>
+    <button id="guideBtn">&#127873; Item guide</button>
+    <button id="logBtn">&#128220; Update log</button>
+    <h2 class="devOnly">Test</h2>
+    <label class="devOnly">Steer <input type="range" id="steer" min="-1" max="1" step=".01" value="0"></label>
+    <label class="devOnly">Spin wheels <input type="checkbox" id="spin"></label>
+    <label class="devOnly">Turntable <input type="checkbox" id="turn" checked></label>
+  </section>
 </aside>
 
 <div id="hud">
@@ -417,11 +445,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-27.2';
+const BUILD = '2026-11-27.3';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['27 Nov 2026', [
+    'Easier menu: tabs for Race, Kart, Friends and More, with Start always at the top',
     'Sign in with Google (top of the menu) to save all your progress to your account: your kart, name, settings, phone controls, time trial records and ghosts, and your Grand Prix. Sign in on another device and it all comes with you',
     'Grand Prix progress is saved after every race. Close the game and tap ▶ Continue Grand Prix in the menu to carry on where you left off',
     'Fixed: in a room, races 4 and 5 of a Grand Prix lost the cup points',
@@ -5128,6 +5157,8 @@ function netBroadcast(msg, except) {
 
 function drawRoom() {
   const inRoom = !!net.room;
+  if (inRoom && !drawRoom.wasIn && typeof showTab === 'function') showTab('friends');
+  drawRoom.wasIn = inRoom;
   drawTrackPicker();
   $('netMenu').hidden = inRoom;
   $('netRoom').hidden = !inRoom;
@@ -5631,6 +5662,15 @@ function netInterpolate() {
 }
 
 try { $('netName').value = localStorage.getItem('kart-name') || ''; } catch (e) {}
+// ---------- Menu tabs: Race, Kart, Friends, More (the last one is remembered) ----------
+function showTab(id) {
+  document.querySelectorAll('.tabPage').forEach(p => p.classList.toggle('on', p.dataset.tab === id));
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === id));
+  $('panel').scrollTop = 0;
+  try { localStorage.setItem('kart-menu-tab', id); } catch (e) {}
+}
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+{ let t = 'race'; try { t = localStorage.getItem('kart-menu-tab') || t; } catch (e) {} showTab(document.querySelector(`.tabPage[data-tab="${t}"]`) ? t : 'race'); }
 drawRoom();   // shows Continue Grand Prix if a cup is saved, and the right Start label
 
 // ---------- Cloud save: Sign in with Google ----------
