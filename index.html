@@ -150,6 +150,7 @@
   #ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0; }
   #flash.hit { background: radial-gradient(circle, transparent 40%, rgba(255, 40, 30, .6)); animation: fade .6s ease-out forwards; }
   #flash.freeze { background: radial-gradient(circle, rgba(200, 240, 255, .15) 30%, rgba(150, 215, 255, .75)); animation: fade 1.2s ease-out forwards; }
+  #flash.soak { background: radial-gradient(circle, rgba(90, 170, 255, .1) 35%, rgba(60, 150, 255, .65)); animation: fade .9s ease-out forwards; }
   #flash.zap { background: rgba(200, 230, 255, .75); animation: fade .5s ease-out forwards; }
   #flash.boom { background: radial-gradient(circle, rgba(255, 190, 60, .45), transparent 70%); animation: fade .4s ease-out forwards; }
   .card tr td:first-child { width: 2.2em; }
@@ -445,11 +446,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-27.3';
+const BUILD = '2026-11-27.4';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['27 Nov 2026', [
+    'Balloon is now a Water balloon 🎈: throw it at the racer ahead and the splash soaks everyone nearby (slower and slippery for a moment). It no longer protects you',
     'Easier menu: tabs for Race, Kart, Friends and More, with Start always at the top',
     'Sign in with Google (top of the menu) to save all your progress to your account: your kart, name, settings, phone controls, time trial records and ghosts, and your Grand Prix. Sign in on another device and it all comes with you',
     'Grand Prix progress is saved after every race. Close the game and tap ▶ Continue Grand Prix in the menu to carry on where you left off',
@@ -2927,11 +2929,12 @@ const ITEMS = {
   ink: { icon: '🦑', name: 'Ink', uses: 1 },
   phase: { icon: '👻', name: 'Ghost mode', uses: 1 },
   coinbag: { icon: '💰', name: 'Coin bag', uses: 3 },
-  balloon: { icon: '🎈', name: 'Balloon', uses: 1 },
+  balloon: { icon: '🎈', name: 'Water balloon', uses: 1 },
   decoy: { icon: '🎭', name: 'Decoy', uses: 1 },
 };
-// Balloon: works by itself while it's in either item slot. The next hit (rocket, oil, zap, freeze, steal, superstar or
-// mega kart) pops the balloon instead of you. Pressing the item button never wastes it.
+// Water balloon (key 'balloon'): lobbed forward along the track at the racer ahead of you. It bursts where it lands, or on
+// the first kart it comes down on, and everyone within SPLASH_R gets soaked: slower and slippery for SOAK_TIME seconds.
+const WATER_FLIGHT = 1.1, SPLASH_R = 5, SOAK_TIME = 1.6, SOAK_SPEED = .7;
 // Decoy: a still copy of your kart left on the road behind you for DECOY_TIME seconds. Rockets, Freeze and Steal go for
 // it when it's the closest thing to them, and one hit breaks it. Karts drive through it. Each racer has one at a time.
 const DECOY_TIME = 15;
@@ -2953,7 +2956,7 @@ const ITEM_ODDS = {
   turbo: p => 2 + 2 * p, triple: p => 3 * p * p, oil: p => 4.5 * (1 - p) + .4, rocket: p => .6 + 2.6 * p,
   shield: p => 3 * (1 - p) + .5, star: p => 2.4 * p * p * p, zap: p => p > .7 ? 1.6 * p : 0, mega: p => .7 + 1.8 * p,
   freeze: p => .8 + 1.6 * p, coin: p => 1.5, steal: p => .9 + 1.4 * p, ink: p => .6 + 1.6 * p,
-  phase: p => .8 + 1.2 * p, coinbag: p => .6, balloon: p => 1.4 * (1 - p) + .4, decoy: p => 1.2 * (1 - p) + .5,
+  phase: p => .8 + 1.2 * p, coinbag: p => .6, balloon: p => .9 + 1.2 * p, decoy: p => 1.2 * (1 - p) + .5,
 };
 
 function buildBlocks(w) {
@@ -2995,7 +2998,13 @@ function buildFxKit() {
   rocket.traverse(o => { o.castShadow = true; });
   const iceGeo = new THREE.BoxGeometry(2.7, 2, 3.5);
   const iceMat = std({ color: 0xbfeaff, transparent: true, opacity: .55, roughness: .05, metalness: .1, emissive: 0x3a8fc0, emissiveIntensity: .35, depthWrite: false });
-  return { oilGeo, oilMat, rocket, bubbleGeo: new THREE.SphereGeometry(1.75, 28, 18), iceGeo, iceMat };
+  // Water balloon: a squashy blue ball with a knot
+  const water = new THREE.Group(), wMat = std({ color: 0x3aa8ff, roughness: .15, metalness: 0, emissive: 0x0a3a70, emissiveIntensity: .5, transparent: true, opacity: .9 });
+  const wBall = new THREE.Mesh(new THREE.SphereGeometry(.55, 18, 14), wMat); wBall.scale.set(1, .9, 1.1);
+  const knot = new THREE.Mesh(new THREE.ConeGeometry(.12, .22, 8), wMat); knot.position.set(0, 0, -.62); knot.rotation.x = -Math.PI / 2;
+  water.add(wBall, knot);
+  water.traverse(o => { o.castShadow = true; });
+  return { water, oilGeo, oilMat, rocket, bubbleGeo: new THREE.SphereGeometry(1.75, 28, 18), iceGeo, iceMat };
 }
 
 function rollItem(k) {
@@ -3023,11 +3032,6 @@ function shiftItems(k) {
 }
 
 function useItem(k) {
-  // A balloon in the first slot just waits for a hit; use whatever is in the second slot instead
-  if (k.item === 'balloon') {
-    if (!k.item2 || k.roll2 > 0) return;
-    [k.item, k.item2, k.uses, k.uses2] = [k.item2, k.item, k.uses2, k.uses];
-  }
   const kind = k.item;
   if (!kind || k.roll > 0) return;
   if (--k.uses <= 0) k.item = null;
@@ -3047,6 +3051,7 @@ function useItem(k) {
     fire({ k: 'decoy', slot: k.slot, x, z, yaw: k.yaw });
   } else if (kind === 'ink') fire({ k: 'ink', slot: k.slot, s: k.total });   // s: how far round you were, so only karts ahead get inked
   else if (kind === 'coin' || kind === 'coinbag') fire({ k: 'coin', slot: k.slot });
+  else if (kind === 'balloon') fire(waterThrow(k));
   else if (kind === 'phase') { k.phaseT = PHASE_TIME; burst(k.x, k.y + 1, k.z, 22, [.85, .9, 1]); }
   if (k.isPlayer) buzz(35);
   if (kind !== 'freeze' && kind !== 'steal' && kind !== 'decoy' && (k.isPlayer || near(k, 60))) sound.sfx(kind === 'triple' ? 'turbo' : kind === 'coinbag' ? 'coin' : kind, k.isPlayer ? 1 : .5);
@@ -3082,6 +3087,11 @@ function spawnFx(e) {
     fx.mesh = new THREE.Mesh(kit.oilGeo, kit.oilMat);
     fx.mesh.position.set(e.x, fx.y + .06, e.z);
     fx.mesh.rotation.y = Math.random() * 6;
+  } else if (e.k === 'balloon') {
+    fx.s = e.s; fx.lat = e.lat; fx.v = clamp(+e.v || 30, 0, 160); fx.life = WATER_FLIGHT; fx.h = 1.6;
+    fx.target = race.karts.find(k => k.slot === e.target) || null;
+    fx.mesh = kit.water.clone();
+    placeRocket(fx);
   } else {
     fx.s = e.s; fx.lat = e.lat; fx.life = 7;
     fx.target = race.karts.find(k => k.slot === e.target) || null;
@@ -3147,15 +3157,41 @@ function decoyHitBy(kind, owner, slot) {
   const f = race.fx.find(f => f.k === 'decoy' && !f.broken && f.owner && f.owner.slot === slot);
   if (f) breakDecoy(f);
 }
-// The balloon pops instead of you. True if there was one to pop.
-const holdsBalloon = k => k.item === 'balloon' && k.roll <= 0 || k.item2 === 'balloon' && k.roll2 <= 0;
-function popBalloon(k) {
-  if (!holdsBalloon(k)) return false;
-  if (k.item === 'balloon' && k.roll <= 0) { k.item = null; k.uses = 0; } else { k.item2 = null; k.uses2 = 0; }
-  burst(k.x, k.y + 2.6, k.z, 28, [1, .25, .3]);
-  if (k.isPlayer || near(k, 60)) sound.sfx('pop', k.isPlayer ? 1 : .5);
-  if (k.isPlayer) { buzz(50); race.shake = Math.max(race.shake, .2); }
-  return true;
+// Throwing a water balloon: aimed so it comes down where the racer ahead will be (if they're 10-90m ahead),
+// otherwise lobbed about 35m further than you'd get on your own. Sent as track position, side and forward speed,
+// so every browser in a room flies the same balloon.
+function waterThrow(k) {
+  const order = ranking(), at = order.indexOf(k), t = at > 0 ? order[at - 1] : null, gap = t ? (t.total - k.total) * DS : 0;
+  let v = Math.max(0, k.v) + 32;
+  if (t && gap > 10 && gap < 90) v = clamp(gap / WATER_FLIGHT + Math.max(0, t.v), Math.max(0, k.v) + 8, Math.max(0, k.v) + 80);
+  return { k: 'balloon', slot: k.slot, s: k.total + 2.5 / DS, lat: k.lat, v: round(v, 2), target: t && gap > 0 && gap < 90 ? t.slot : -1 };
+}
+// The balloon bursts: everyone close by gets soaked. Each browser soaks only the karts it drives.
+function splashAt(f) {
+  if (near(f, 140)) {
+    for (let n = 0; n < 46; n++) { const a = Math.random() * 6.3, r = 3 + Math.random() * 9; spark(f.x, f.y + .4, f.z, Math.cos(a) * r, 3 + Math.random() * 6, Math.sin(a) * r, .7 + Math.random() * .4, .45, .75, 1, 16); }
+    sound.sfx('splash', near(f, 25) ? 1 : .5);
+  }
+  for (const d of race.fx) if (d.k === 'decoy' && !d.broken && (d.x - f.x) ** 2 + (d.z - f.z) ** 2 < SPLASH_R * SPLASH_R) breakDecoy(d);
+  for (const k of race.karts) {
+    if (k === f.owner || k.remote || k.finish !== null) continue;
+    if ((k.x - f.x) ** 2 + (k.z - f.z) ** 2 > SPLASH_R * SPLASH_R || Math.abs(k.y - f.y) > 4) continue;
+    soak(k, f.owner);
+  }
+}
+// Soaked: slower and slippery for a moment. A shield, superstar or ghost mode keeps you dry.
+function soak(k, by) {
+  if (k.starT > 0 || k.phaseT > 0) return;
+  if (k.shieldT > 0) {
+    k.shieldT = 0;
+    burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
+    if (k.isPlayer) sound.sfx('pop');
+    showHitBy(k, by, 'balloon', true);
+    return;
+  }
+  showHitBy(k, by, 'balloon');
+  k.soakT = SOAK_TIME; k.v *= .8; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0;
+  if (k.isPlayer) { race.shake = .35; flash('soak'); buzz([40, 30, 60]); }
 }
 
 function placeRocket(f) {
@@ -3196,7 +3232,6 @@ function freezeFx(owner, k) {
     showHitBy(k, owner, 'freeze', true);
     return;
   }
-  if (popBalloon(k)) { showHitBy(k, owner, 'freeze', true); return; }
   showHitBy(k, owner, 'freeze');
   k.freezeT = FREEZE_TIME; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0; k.trickB = 0;
   if (k.isPlayer) { race.shake = .4; flash('freeze'); buzz([80, 40, 80]); }
@@ -3216,7 +3251,6 @@ function stealFx(owner, k) {
     showHitBy(k, owner, 'steal', true);
     return;
   }
-  if (popBalloon(k)) { showHitBy(k, owner, 'steal', true); return; }
   let item = null, uses = 0;
   if (k.item && k.roll <= 0) { item = k.item; uses = k.uses; k.item = null; k.uses = 0; }
   else if (k.item2 && k.roll2 <= 0) { item = k.item2; uses = k.uses2; k.item2 = null; k.uses2 = 0; }
@@ -3324,7 +3358,6 @@ function hit(k, by, id) {
     showHitBy(k, by, id, true);
     return false;
   }
-  if (popBalloon(k)) { showHitBy(k, by, id, true); return false; }
   showHitBy(k, by, id);
   k.spinT = SPIN; k.v *= .4; k.drift = 0; k.driftT = 0; k.boostT = 0; k.padT = 0;
   if (k.isPlayer) { race.shake = .6; flash('hit'); sound.sfx('bonk'); buzz([60, 40, 90]); }
@@ -3335,7 +3368,6 @@ function hit(k, by, id) {
 function knock(k, nx, nz, by) {
   if (k.knockCD > 0 || k.starT > 0 || k.megaT > 0 || k.finish !== null) return;
   k.knockCD = 1;
-  if (popBalloon(k)) { showHitBy(k, by, 'mega', true); return; }
   if (k.shieldT > 0) {
     k.shieldT = 0;
     burst(k.x, k.y + .8, k.z, 30, [.4, .8, 1]);
@@ -3401,12 +3433,25 @@ function stepFx(h) {
         }
       }
     }
+    if (f.k === 'balloon') {
+      // Flies on along the track in an arc, drifting across towards whoever it was thrown at
+      const t = f.target;
+      if (t && race.karts.includes(t)) f.lat += (t.lat - f.lat) * Math.min(1, h * 3);
+      f.s += f.v * h / DS;
+      const a = Math.min(f.age, WATER_FLIGHT);
+      f.h = 1.6 + (11 * WATER_FLIGHT - 1.6 / WATER_FLIGHT) * a - 11 * a * a;   // up and back down to the road at WATER_FLIGHT
+      placeRocket(f); f.y += f.h - .75;
+      let land = f.age >= WATER_FLIGHT;
+      // Coming down on a kart bursts it there and then
+      if (!land && f.h < 2.4) for (const k of race.karts) if (k !== f.owner && k.phaseT <= 0 && (k.x - f.x) ** 2 + (k.z - f.z) ** 2 < 6) { land = true; break; }
+      if (land) { f.y = cy[f.i]; splashAt(f); gone = true; }
+    }
     if (f.k === 'decoy') {
       // Flickers in its last two seconds
       f.mesh.visible = !f.broken && (f.life - f.age > 2 || Math.sin(f.age * 25) > 0);
       if (gone && !f.broken && near(f, 80)) burst(f.x, f.y + 1, f.z, 18, [.6, .6, .65]);
     }
-    if (!gone && f.k !== 'decoy') for (const k of race.karts) {
+    if (!gone && f.k !== 'decoy' && f.k !== 'balloon') for (const k of race.karts) {
       if (k === f.owner && (f.k === 'rocket' || f.age < 1.2) || k.phaseT > 0) continue;
       const dx = k.x - f.x, dz = k.z - f.z;
       if (dx * dx + dz * dz > (f.k === 'rocket' ? 5.8 : 4.6)) continue;
@@ -3431,6 +3476,12 @@ function renderFx(dt) {
     b.mesh.position.y = b.y + Math.sin(race.t * 2.4 + b.phase) * .22;
   }
   for (const f of race.fx) {
+    if (f.k === 'balloon') {
+      f.mesh.position.set(f.x, f.y, f.z);
+      f.mesh.rotation.set(Math.sin(f.age * 9) * .4, Math.atan2(tx[f.i], tz[f.i]), f.age * 7);
+      const w = Math.sin(f.age * 18) * .08; f.mesh.scale.set(1 + w, 1 - w, 1 + w);
+      continue;
+    }
     if (f.k !== 'rocket') continue;
     f.mesh.position.set(f.x, f.y, f.z);
     f.mesh.rotation.y = Math.atan2(tx[f.i], tz[f.i]);
@@ -3477,21 +3528,12 @@ function makeRacer(name, opts, isPlayer) {
   const ice = new THREE.Mesh(world.kit.iceGeo, world.kit.iceMat);
   ice.position.y = .8; ice.visible = false;
   view.group.add(ice);
-  // A red balloon on a string over the back of the kart while you hold a Balloon item
-  const balloon = new THREE.Group(), bMat = new THREE.MeshStandardMaterial({ color: 0xff3348, roughness: .3, metalness: 0, emissive: 0x400008 });
-  const ball = new THREE.Mesh(balloonGeo ||= new THREE.SphereGeometry(.5, 18, 14), bMat);
-  ball.scale.set(1, 1.18, 1); ball.position.y = 1.45;
-  const str = new THREE.Mesh(stringGeo ||= new THREE.CylinderGeometry(.018, .018, 1.4, 4), new THREE.MeshBasicMaterial({ color: 0xeeeeee }));
-  str.position.y = .7;
-  balloon.add(ball, str);
-  balloon.position.set(0, 1.2, -1.1); balloon.visible = false;
-  view.group.add(balloon);
-  bubble.userData.extra = ice.userData.extra = balloon.userData.extra = true;   // left off a decoy's copy of the kart
+  bubble.userData.extra = ice.userData.extra = true;   // left off a decoy's copy of the kart
   return {
-    ice, balloon,
+    ice,
     name, view, bubble, isPlayer, ai: !isPlayer, body: opts.body, x: 0, y: 0, z: 0, yaw: 0, moveYaw: 0, v: 0, steer: 0, shown: 0,
     item: null, uses: 0, roll: 0, item2: null, uses2: 0, roll2: 0, itemWait: 0,
-    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, phaseT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, inkT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
+    onRamp: null, air: false, tricked: false, flipT: FLIP, flipKind: 0, flipDir: 1, flipAngle: 0, lastWantDrift: false, trickB: 0, wantItem: false, spinT: 0, starT: 0, shieldT: 0, phaseT: 0, zapT: 0, megaT: 0, megaS: 1, freezeT: 0, inkT: 0, soakT: 0, slowT: 0, knockCD: 0, kx: 0, kz: 0,
     slot: 0, lapNo: 1, lapStart: 0, laps: [], stallT: 0, gasFrom: null,
     top: 28 + st.Speed * 1.6, accel: 8 + st.Accel * 1.9, turn: 1.02 + st.Handling * .09, grass: BODIES[opts.body].grass ?? .85, mass: 1 + st.Weight * .35,
     topMul: 1, rubber: 1, idx: 0, total: 0, lat: 0, lane: 0, laneT: 0, finish: null, lap: 1, onRoad: true, stuck: 0,
@@ -3614,7 +3656,7 @@ function startRace(plan) {
 let trackBannerTimer = 0;
 function leaveRace() {
   if (race) {
-    for (const k of race.karts) { removeNameTag(k); world.scene.remove(k.view.group); k.bubble.material.dispose(); k.balloon.children.forEach(o => o.material.dispose()); k.view.dispose(); }
+    for (const k of race.karts) { removeNameTag(k); world.scene.remove(k.view.group); k.bubble.material.dispose(); k.view.dispose(); }
     for (const f of race.fx) world.scene.remove(f.mesh);
     if (race.ghost) disposeGhost(race.ghost);
     race = null;
@@ -3713,6 +3755,7 @@ function thinkCPU(k, h) {
     if (it === 'oil') go = go && (karts.some(o => o !== k && gapTo(o) < -2 && gapTo(o) > -30) || k.itemWait < -6);
     if (it === 'rocket') go = go && (karts.some(o => o !== k && gapTo(o) > 6 && gapTo(o) < 140) || k.itemWait < -6);
     if (it === 'ink') go = go && karts.some(o => o !== k && o.finish === null && o.total > k.total);   // in the lead, keep it until someone passes
+    if (it === 'balloon') go = go && (karts.some(o => o !== k && gapTo(o) > 12 && gapTo(o) < 80) || k.itemWait < -6);
     if (it === 'mega') go = go && (karts.some(o => o !== k && Math.abs(gapTo(o)) < 25) || k.itemWait < -6);
     // Decoy: when a rocket is coming, or someone is close behind
     if (it === 'decoy') go = go && (race.fx.some(f => f.k === 'rocket' && f.target === k) || karts.some(o => o !== k && gapTo(o) < -3 && gapTo(o) > -40) || k.itemWait < -6);
@@ -3748,7 +3791,7 @@ function stepKart(k, h) {
   // Stalled at the start after pressing go too early: no gas for a moment
   if (k.stallT > 0) { k.stallT = Math.max(0, k.stallT - h); k.throttle = 0; }
   k.starT = Math.max(0, k.starT - h); k.shieldT = Math.max(0, k.shieldT - h); k.zapT = Math.max(0, k.zapT - h);
-  k.megaT = Math.max(0, k.megaT - h); k.phaseT = Math.max(0, (k.phaseT || 0) - h); k.slowT = Math.max(0, k.slowT - h); k.inkT = Math.max(0, (k.inkT || 0) - h); k.knockCD = Math.max(0, k.knockCD - h);
+  k.megaT = Math.max(0, k.megaT - h); k.phaseT = Math.max(0, (k.phaseT || 0) - h); k.slowT = Math.max(0, k.slowT - h); k.inkT = Math.max(0, (k.inkT || 0) - h); k.soakT = Math.max(0, (k.soakT || 0) - h); k.knockCD = Math.max(0, k.knockCD - h);
   if (k.roll > 0 && (k.roll -= h) <= 0 && k.isPlayer) sound.sfx('got');
   if (k.roll2 > 0 && (k.roll2 -= h) <= 0 && k.isPlayer) sound.sfx('got');
   shiftItems(k);
@@ -3757,7 +3800,7 @@ function stepKart(k, h) {
 
   // Drifting costs a little top speed (up to 8% once fully sideways). Speed pads lift your top speed to 115% for a
   // few seconds rather than kicking you forward, and once they wear off you ease back down to normal.
-  const top = k.top * (k.ai ? k.topMul * k.rubber : 1) * (onRoad || k.starT > 0 || k.hopY > .5 ? 1 : k.grass) * (k.boostT > 0 ? 1.3 : k.trickB > 0 ? TRICK_SPEED : 1) * (k.starT > 0 ? 1.15 : 1) * (k.zapT > 0 ? .72 : 1) * (k.slowT > 0 ? SLOW_SPEED : 1)
+  const top = k.top * (k.ai ? k.topMul * k.rubber : 1) * (onRoad || k.starT > 0 || k.hopY > .5 ? 1 : k.grass) * (k.boostT > 0 ? 1.3 : k.trickB > 0 ? TRICK_SPEED : 1) * (k.starT > 0 ? 1.15 : 1) * (k.zapT > 0 ? .72 : 1) * (k.slowT > 0 ? SLOW_SPEED : 1) * (k.soakT > 0 ? SOAK_SPEED : 1)
     * (k.padT > 0 ? PAD_SPEED : 1) * (k.drift ? 1 - .08 * smooth(0, 1, k.driftIn) : 1);
   const accel = k.accel * (k.boostT > 0 || k.starT > 0 ? 3 : k.trickB > 0 ? 2 : k.padT > 0 ? 1.8 : 1);
   if (k.throttle) k.v += k.v < top ? accel * (1.08 - Math.max(0, k.v) / top) * h : -(onRoad ? 7 : 12) * h;
@@ -4351,8 +4394,6 @@ function renderKart(k, dt) {
   // Ghost mode: see-through, flickering in the last second
   const ghostly = k.phaseT > 0 ? (k.phaseT < 1 && Math.sin(race.t * 26) > 0 ? .65 : .28) : 1;
   if (ghostly !== k.shownAlpha) setKartAlpha(k, ghostly);
-  k.balloon.visible = k.remote ? !!k.netBalloon : holdsBalloon(k);
-  if (k.balloon.visible) { k.balloon.rotation.z = Math.sin(race.t * 2.1 + k.slot) * .14 - k.steer * .12; k.balloon.rotation.x = .12 + Math.min(.35, Math.abs(k.v) * .01); }
   k.ice.visible = k.freezeT > 0;
   if (k.ice.visible) k.ice.material.opacity = k.freezeT < .6 && Math.sin(race.t * 30) > 0 ? .25 : .55;
   if (k.wasFrozen && k.freezeT <= 0) { burst(k.x, k.y + 1, k.z, 26, [.8, .95, 1]); if (k.isPlayer) sound.sfx('pop'); }
@@ -4372,6 +4413,7 @@ function renderKart(k, dt) {
   const sin = Math.sin(k.yaw), cos = Math.cos(k.yaw), rx = k.x - sin * 1.1, rz = k.z - cos * 1.1;
   if (k.starT > 0 && Math.random() < .7) { const c = new THREE.Color().setHSL(Math.random(), 1, .6); spark(k.x + (Math.random() - .5) * 2.4, k.y + Math.random() * 1.8, k.z + (Math.random() - .5) * 2.4, 0, 1.5, 0, .5, c.r, c.g, c.b); }
   if (k.slowT > 0 && Math.random() < .35) spark(k.x + (Math.random() - .5) * 1.4, k.y + 1.9, k.z + (Math.random() - .5) * 1.4, (Math.random() - .5) * 2, 1, (Math.random() - .5) * 2, .5, .9, .75, .3, 2);
+  if (k.soakT > 0 && Math.random() < .7) spark(k.x + (Math.random() - .5) * 1.8, k.y + 1.2 + Math.random() * .8, k.z + (Math.random() - .5) * 1.8, (Math.random() - .5) * 1.5, -1, (Math.random() - .5) * 1.5, .45, .45, .75, 1, 12);
   if (k.spinT > 0 && Math.random() < .6) spark(k.x, k.y + 1.6, k.z, (Math.random() - .5) * 3, 2, (Math.random() - .5) * 3, .5, 1, .95, .3, 4);
   if (k.drift && Math.random() < .8) {
     const blue = k.driftT > .75, hot = k.driftT > 1.7, s = Math.random() < .5 ? -1 : 1;
@@ -4593,6 +4635,8 @@ const sound = (() => {
     thud: v => { tone(160, .3, { type: 'sine', vol: .12 * v, slide: 50 }); hiss(.2, { vol: .14 * v, f0: 700, f1: 120, type: 'lowpass' }); },
     zap: v => { hiss(.5, { vol: .18 * v, f0: 4000, f1: 200 }); tone(1800, .5, { type: 'sawtooth', vol: .05 * v, slide: 80 }); },
     pop: v => tone(1400, .15, { type: 'sine', vol: .08 * v, slide: 300 }),
+    balloon: v => tone(500, .25, { type: 'sine', vol: .05 * v, slide: 900 }),
+    splash: v => { tone(900, .12, { type: 'sine', vol: .08 * v, slide: 250 }); hiss(.55, { vol: .2 * v, f0: 2500, f1: 300, type: 'lowpass' }); },
     freeze: v => { hiss(.45, { vol: .14 * v, f0: 6000, f1: 1500 }); notes([1568, 2093, 2637], .05, { vol: .035 * v, type: 'sine' }); },
     steal: v => { tone(600, .25, { type: 'square', vol: .04 * v, slide: 1500 }); hiss(.25, { vol: .08 * v, f0: 1200, f1: 3500 }); },
     ink: v => { hiss(.5, { vol: .2 * v, f0: 900, f1: 120, type: 'lowpass' }); tone(220, .3, { type: 'sine', vol: .08 * v, slide: 70 }); },
@@ -4733,19 +4777,19 @@ addEventListener('keyup', e => { keys[e.code] = false; });
 const ITEM_GUIDE = {
   turbo: ['A quick burst of speed.', 'Use it on a straight, or to cut across the grass without slowing down.', 'Nothing can stop it.'],
   triple: ['Three turbos in one. Each press uses one.', 'Fire them one after another for a long boost, or save some for later.', 'If someone steals it, they get the turbos you have left.'],
-  oil: ['Drops an oil slick behind you. Anyone who drives over it spins out. It stays on the road for 40 seconds.', 'Use it when someone is right behind you, or drop it on the racing line before a corner.', 'A shield, superstar, balloon or ghost mode gets through safely.'],
-  rocket: ['A homing rocket that flies along the track after the racer one place ahead of you and spins them out.', 'Fire it when someone is just ahead of you. In 1st place it just flies forward.', 'A shield, superstar, balloon or ghost mode stops it. A decoy fools it.'],
+  oil: ['Drops an oil slick behind you. Anyone who drives over it spins out. It stays on the road for 40 seconds.', 'Use it when someone is right behind you, or drop it on the racing line before a corner.', 'A shield, superstar or ghost mode gets through safely.'],
+  rocket: ['A homing rocket that flies along the track after the racer one place ahead of you and spins them out.', 'Fire it when someone is just ahead of you. In 1st place it just flies forward.', 'A shield, superstar or ghost mode stops it. A decoy fools it.'],
   shield: ['A bubble around your kart for 10 seconds. It blocks the next hit and then pops.', 'Turn it on when a rocket is coming, or before you drive past oil.', 'It only blocks one hit.'],
   star: ['Superstar! For 7 seconds you go faster, can\'t be hurt, don\'t slow down on grass, and flatten any kart you touch.', 'Use it to catch up, or to barge through a crowd of karts.', 'Mostly comes to racers near the back.'],
-  zap: ['Zaps every other racer. They spin out and go slower for 3.5 seconds.', 'Use it straight away to catch up with the pack.', 'Only racers near the back get it. A shield, superstar, balloon or ghost mode stops it.'],
-  mega: ['Your kart grows big and heavy for 8 seconds. Driving into anyone knocks them aside and slows them down.', 'Use it when other karts are close by, then ram them.', 'A shield or balloon stops the knock. Superstars and other mega karts can\'t be knocked.'],
-  freeze: ['Freezes the closest racer, wherever they are, in a block of ice for 2.5 seconds.', 'Use it on someone right next to you, or to stop the racer just ahead.', 'A shield, superstar, balloon or ghost mode stops it. If someone\'s decoy is closer, the decoy breaks instead.'],
+  zap: ['Zaps every other racer. They spin out and go slower for 3.5 seconds.', 'Use it straight away to catch up with the pack.', 'Only racers near the back get it. A shield, superstar or ghost mode stops it.'],
+  mega: ['Your kart grows big and heavy for 8 seconds. Driving into anyone knocks them aside and slows them down.', 'Use it when other karts are close by, then ram them.', 'A shield stops the knock. Superstars and other mega karts can\'t be knocked.'],
+  freeze: ['Freezes the closest racer, wherever they are, in a block of ice for 2.5 seconds.', 'Use it on someone right next to you, or to stop the racer just ahead.', 'A shield, superstar or ghost mode stops it. If someone\'s decoy is closer, the decoy breaks instead.'],
   coin: ['Does nothing in a single race. In a Grand Prix it\'s worth 1 bonus point.', 'In a Grand Prix, use it any time to bank the point.', 'Can be stolen before you use it.'],
-  steal: ['Takes an item from the closest racer and gives it to you.', 'Use it when someone close by has a good item.', 'A shield, superstar, balloon or ghost mode stops it. A decoy fools it. You get nothing if they have nothing.'],
+  steal: ['Takes an item from the closest racer and gives it to you.', 'Use it when someone close by has a good item.', 'A shield, superstar or ghost mode stops it. A decoy fools it. You get nothing if they have nothing.'],
   ink: ['Splats ink over the screen of every racer ahead of you for 5 seconds. CPUs wobble and slow down.', 'Use it when you\'re behind. In 1st place it does nothing.', 'Ghost mode keeps your screen clean.'],
   phase: ['Ghost mode: you turn see-through for 5 seconds. Karts drive through you and no item can touch you.', 'Turn it on when a rocket is chasing you, or a superstar or mega kart is coming.', 'Before you use it, someone can steal it.'],
   coinbag: ['A bag of 3 coins. Each press uses one. In a Grand Prix that\'s 3 bonus points.', 'In a Grand Prix, use them any time to bank the points.', 'If someone steals it, they get the coins you have left.'],
-  balloon: ['A red balloon floats over your kart. The next hit pops the balloon instead of you.', 'You don\'t press anything: it works by itself while you hold it, in either item slot. Pressing the item button uses your other item.', 'Pops on rockets, oil, zaps, freeze, steal, superstars and mega karts. A shield goes first.'],
+  balloon: ['Throws a water balloon up the track at the racer ahead of you. It bursts where it lands and soaks everyone close by: they go slower and slide about for 1.6 seconds.', 'Throw it when someone is a little way ahead of you. It aims for where they\'ll be when it comes down.', 'A shield, superstar or ghost mode keeps you dry. The splash breaks decoys too.'],
   decoy: ['Leaves a copy of your kart on the road behind you for 15 seconds, or until it takes 1 hit.', 'Drop it when a rocket is chasing you or someone is close behind. Rockets, freeze and steal go for it when it\'s closer than you.', 'Karts drive through it. You can only have one at a time.'],
 };
 function itemIco(id) { return id === 'coin' ? '<i class="coinIco"></i>' : ITEMS[id].icon; }
@@ -4755,8 +4799,8 @@ function showGuideList() {
 }
 function showGuideItem(id) {
   const [does, how, tip] = ITEM_GUIDE[id] || ['', '', ''], uses = ITEMS[id].uses;
-  $('guideInfo').innerHTML = `<div class="big"><span class="ic">${itemIco(id)}</span><div><b>${ITEMS[id].name}</b><span>${id === 'balloon' ? 'Works by itself' : uses > 1 ? `${uses} uses` : '1 use'}</span></div></div>` +
-    `<h4>What it does</h4><p>${does}</p><h4>How to use it</h4><p>${how}${id === 'balloon' ? '' : ` Press <b>E</b> on a keyboard, or the <b>Item</b> button on a phone.`}</p><h4>Good to know</h4><p>${tip}</p>`;
+  $('guideInfo').innerHTML = `<div class="big"><span class="ic">${itemIco(id)}</span><div><b>${ITEMS[id].name}</b><span>${uses > 1 ? `${uses} uses` : '1 use'}</span></div></div>` +
+    `<h4>What it does</h4><p>${does}</p><h4>How to use it</h4><p>${how} Press <b>E</b> on a keyboard, or the <b>Item</b> button on a phone.</p><h4>Good to know</h4><p>${tip}</p>`;
   $('guideGrid').hidden = true; $('guideHint').hidden = true; $('guideInfo').hidden = false; $('guideBack').hidden = false;
   $('guideInfo').scrollTop = 0;
 }
@@ -5621,7 +5665,7 @@ function netFinished(k) {
 
 const SNAP_LEN = 22;
 function netSnapshot(k) {
-  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2), round(k.freezeT, 2), round(k.phaseT, 2), holdsBalloon(k) ? 1 : 0];
+  return [k.slot, round(k.x, 2), round(k.y, 2), round(k.z, 2), round(k.yaw, 3), round(k.v, 2), round(k.steer, 2), k.drift, round(k.driftT, 2), round(k.boostT, 2), round(k.hopY, 2), round(k.pitch, 3), k.total, round(k.spinT, 2), round(k.starT, 2), round(k.shieldT, 2), round(k.flipAngle, 2), k.flipKind, round(k.megaT, 2), round(k.freezeT, 2), round(k.phaseT, 2), round(k.soakT || 0, 2)];
 }
 function netStore(k, snap) {
   if (!k?.remote || !Array.isArray(snap) || snap.length !== SNAP_LEN || !snap.every(Number.isFinite)) return;
@@ -5652,7 +5696,7 @@ function netInterpolate() {
     k.v = mix(5); k.steer = mix(6); k.drift = b[7]; k.driftT = b[8]; k.driftIn = k.drift ? Math.min(1, k.driftIn + .04) : 0;
     k.boostT = b[9]; k.hopY = Math.max(0, mix(10)); k.pitch = mix(11); k.total = b[12];
     k.spinT = clamp(b[13], 0, SPIN); k.starT = clamp(b[14], 0, 10); k.shieldT = clamp(b[15], 0, 15);
-    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME); k.freezeT = clamp(b[19], 0, FREEZE_TIME); k.phaseT = clamp(b[20], 0, PHASE_TIME); k.netBalloon = b[21] > 0;
+    k.flipAngle = clamp(b[16], -7, 7); k.flipKind = clamp(Math.round(b[17]), 0, 2); k.megaT = clamp(b[18], 0, MEGA_TIME); k.freezeT = clamp(b[19], 0, FREEZE_TIME); k.phaseT = clamp(b[20], 0, PHASE_TIME); k.soakT = clamp(b[21], 0, SOAK_TIME);
     // A short gap in the connection: keep rolling rather than stop dead
     const late = clamp(when - list[list.length - 1].at, 0, COAST_MS) / 1000;
     if (i === list.length - 1 && late > 0) { k.x += Math.sin(k.yaw) * k.v * late; k.z += Math.cos(k.yaw) * k.v * late; }
