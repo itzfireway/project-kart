@@ -463,11 +463,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-27.5';
+const BUILD = '2026-11-27.6';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['27 Nov 2026', [
+    'Water balloon now goes for the closest racer within 50m, in front of you or behind',
     'Grand Prix: after you finish a race, tap 👀 Watch the race to follow the racers still driving. ◀ ▶ (or the arrow keys) switch who you watch, Results takes you back',
     'Balloon is now a Water balloon 🎈: throw it at the racer ahead and the splash soaks everyone nearby (slower and slippery for a moment). It no longer protects you',
     'Easier menu: tabs for Race, Kart, Friends and More, with Start always at the top',
@@ -3106,7 +3107,7 @@ function spawnFx(e) {
     fx.mesh.position.set(e.x, fx.y + .06, e.z);
     fx.mesh.rotation.y = Math.random() * 6;
   } else if (e.k === 'balloon') {
-    fx.s = e.s; fx.lat = e.lat; fx.v = clamp(+e.v || 30, 0, 160); fx.life = WATER_FLIGHT; fx.h = 1.6;
+    fx.s = e.s; fx.lat = e.lat; fx.v = clamp(Number.isFinite(+e.v) ? +e.v : 30, -70, 160); fx.life = WATER_FLIGHT; fx.h = 1.6;
     fx.target = race.karts.find(k => k.slot === e.target) || null;
     fx.mesh = kit.water.clone();
     placeRocket(fx);
@@ -3175,14 +3176,24 @@ function decoyHitBy(kind, owner, slot) {
   const f = race.fx.find(f => f.k === 'decoy' && !f.broken && f.owner && f.owner.slot === slot);
   if (f) breakDecoy(f);
 }
-// Throwing a water balloon: aimed so it comes down where the racer ahead will be (if they're 10-90m ahead),
-// otherwise lobbed about 35m further than you'd get on your own. Sent as track position, side and forward speed,
-// so every browser in a room flies the same balloon.
+// Throwing a water balloon: it goes for the closest racer within WATER_RANGE metres along the road, ahead or behind,
+// and is thrown just hard enough to come down where they'll be (backwards if need be). Nobody in range: lobbed about
+// 35m ahead. Sent as track position, side and speed along the track, so every browser in a room flies the same balloon.
+const WATER_RANGE = 50;
+function waterTarget(k) {
+  let best = null, bd = WATER_RANGE;
+  for (const o of race.karts) {
+    if (o === k || o.finish !== null || o.phaseT > 0) continue;
+    const d = Math.abs((o.total - k.total) * DS);
+    if (d <= bd) { bd = d; best = o; }
+  }
+  return best;
+}
 function waterThrow(k) {
-  const order = ranking(), at = order.indexOf(k), t = at > 0 ? order[at - 1] : null, gap = t ? (t.total - k.total) * DS : 0;
+  const t = waterTarget(k);
   let v = Math.max(0, k.v) + 32;
-  if (t && gap > 10 && gap < 90) v = clamp(gap / WATER_FLIGHT + Math.max(0, t.v), Math.max(0, k.v) + 8, Math.max(0, k.v) + 80);
-  return { k: 'balloon', slot: k.slot, s: k.total + 2.5 / DS, lat: k.lat, v: round(v, 2), target: t && gap > 0 && gap < 90 ? t.slot : -1 };
+  if (t) v = clamp(((t.total - k.total) * DS - 2.5) / WATER_FLIGHT + t.v, -70, Math.max(0, k.v) + 80);
+  return { k: 'balloon', slot: k.slot, s: k.total + 2.5 / DS, lat: k.lat, v: round(v, 2), target: t ? t.slot : -1 };
 }
 // The balloon bursts: everyone close by gets soaked. Each browser soaks only the karts it drives.
 function splashAt(f) {
@@ -3774,7 +3785,7 @@ function thinkCPU(k, h) {
     if (it === 'oil') go = go && (karts.some(o => o !== k && gapTo(o) < -2 && gapTo(o) > -30) || k.itemWait < -6);
     if (it === 'rocket') go = go && (karts.some(o => o !== k && gapTo(o) > 6 && gapTo(o) < 140) || k.itemWait < -6);
     if (it === 'ink') go = go && karts.some(o => o !== k && o.finish === null && o.total > k.total);   // in the lead, keep it until someone passes
-    if (it === 'balloon') go = go && (karts.some(o => o !== k && gapTo(o) > 12 && gapTo(o) < 80) || k.itemWait < -6);
+    if (it === 'balloon') go = go && (!!waterTarget(k) || k.itemWait < -6);
     if (it === 'mega') go = go && (karts.some(o => o !== k && Math.abs(gapTo(o)) < 25) || k.itemWait < -6);
     // Decoy: when a rocket is coming, or someone is close behind
     if (it === 'decoy') go = go && (race.fx.some(f => f.k === 'rocket' && f.target === k) || karts.some(o => o !== k && gapTo(o) < -3 && gapTo(o) > -40) || k.itemWait < -6);
@@ -4878,7 +4889,7 @@ const ITEM_GUIDE = {
   ink: ['Splats ink over the screen of every racer ahead of you for 5 seconds. CPUs wobble and slow down.', 'Use it when you\'re behind. In 1st place it does nothing.', 'Ghost mode keeps your screen clean.'],
   phase: ['Ghost mode: you turn see-through for 5 seconds. Karts drive through you and no item can touch you.', 'Turn it on when a rocket is chasing you, or a superstar or mega kart is coming.', 'Before you use it, someone can steal it.'],
   coinbag: ['A bag of 3 coins. Each press uses one. In a Grand Prix that\'s 3 bonus points.', 'In a Grand Prix, use them any time to bank the points.', 'If someone steals it, they get the coins you have left.'],
-  balloon: ['Throws a water balloon up the track at the racer ahead of you. It bursts where it lands and soaks everyone close by: they go slower and slide about for 1.6 seconds.', 'Throw it when someone is a little way ahead of you. It aims for where they\'ll be when it comes down.', 'A shield, superstar or ghost mode keeps you dry. The splash breaks decoys too.'],
+  balloon: ['Throws a water balloon at the closest racer within 50m, ahead of you or behind. It bursts where it lands and soaks everyone close by: they go slower and lose any boost for 1.6 seconds.', 'Throw it when someone is close, in front or behind. It aims for where they\'ll be when it comes down. With nobody within 50m it just flies up the track.', 'A shield, superstar or ghost mode keeps you dry. The splash breaks decoys too.'],
   decoy: ['Leaves a copy of your kart on the road behind you for 15 seconds, or until it takes 1 hit.', 'Drop it when a rocket is chasing you or someone is close behind. Rockets, freeze and steal go for it when it\'s closer than you.', 'Karts drive through it. You can only have one at a time.'],
 };
 function itemIco(id) { return id === 'coin' ? '<i class="coinIco"></i>' : ITEMS[id].icon; }
