@@ -463,11 +463,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-27.6';
+const BUILD = '2026-11-27.7';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['27 Nov 2026', [
+    'Fixed: online, a Water balloon you threw never reached the other players, so they never got soaked',
     'Water balloon now goes for the closest racer within 50m, in front of you or behind',
     'Grand Prix: after you finish a race, tap 👀 Watch the race to follow the racers still driving. ◀ ▶ (or the arrow keys) switch who you watch, Results takes you back',
     'Balloon is now a Water balloon 🎈: throw it at the racer ahead and the splash soaks everyone nearby (slower and slippery for a moment). It no longer protects you',
@@ -3204,7 +3205,9 @@ function splashAt(f) {
   for (const d of race.fx) if (d.k === 'decoy' && !d.broken && (d.x - f.x) ** 2 + (d.z - f.z) ** 2 < SPLASH_R * SPLASH_R) breakDecoy(d);
   for (const k of race.karts) {
     if (k === f.owner || k.remote || k.finish !== null) continue;
-    if ((k.x - f.x) ** 2 + (k.z - f.z) ** 2 > SPLASH_R * SPLASH_R || Math.abs(k.y - f.y) > 4) continue;
+    // Online the thrower saw you a little behind where you really are, so a balloon aimed at you has a bigger splash
+    const r = SPLASH_R + (k === f.target && f.owner && f.owner.remote ? 4 : 0);
+    if ((k.x - f.x) ** 2 + (k.z - f.z) ** 2 > r * r || Math.abs(k.y - f.y) > 4) continue;
     soak(k, f.owner);
   }
 }
@@ -5659,9 +5662,9 @@ function onHostData(conn, d) {
 }
 
 function cleanFx(e, slot) {
-  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze', 'steal', 'stolen', 'ink', 'coin', 'decoy', 'landed'].includes(e.k)) return null;
+  if (!e || typeof e !== 'object' || !['oil', 'rocket', 'zap', 'freeze', 'steal', 'stolen', 'ink', 'coin', 'decoy', 'landed', 'balloon'].includes(e.k)) return null;
   const num = (v, lim) => clamp(Number.isFinite(+v) ? +v : 0, -lim, lim);
-  return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 199)), yaw: num(e.yaw, 7), item: Math.round(num(e.item ?? -1, 99)), uses: Math.round(num(e.uses ?? 1, 9)) };
+  return { k: e.k, slot: slot ?? Math.round(num(e.slot, 99)), x: num(e.x, 600), z: num(e.z, 600), s: num(e.s, N * 20), lat: num(e.lat, WALL), target: Math.round(num(e.target ?? -1, 199)), yaw: num(e.yaw, 7), item: Math.round(num(e.item ?? -1, 99)), uses: Math.round(num(e.uses ?? 1, 9)), v: num(e.v, 160) };
 }
 function netFx(e) {
   if (net.host) netBroadcast({ t: 'fx', e }); else netToHost({ t: 'fx', e });
