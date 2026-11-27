@@ -44,6 +44,14 @@
   #start { width: 100%; padding: 13px; font-size: 18px; font-weight: 900; font-style: italic; text-transform: uppercase; color: #14161d; background: var(--hot); border: 0; border-radius: 10px; }
   #start:hover { filter: brightness(1.08); }
   #continueGp { width: 100%; margin-top: 8px; padding: 11px; font-size: 15px; font-weight: 800; color: #14161d; background: #ffcf33; border: 0; border-radius: 10px; }
+  #cloud { margin-top: 10px; }
+  #cloudBtn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 10px; font-size: 14px; font-weight: 700; color: #1f1f1f; background: #fff; border: 0; border-radius: 10px; }
+  #cloudBtn:hover { filter: brightness(.95); }
+  #cloudBtn svg { width: 18px; height: 18px; flex: none; }
+  #cloudIn { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 13px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 10px; }
+  #cloudIn b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #cloudOut { padding: 4px 9px; font-size: 12px; color: var(--dim); background: none; border: 1px solid var(--line); border-radius: 7px; }
+  #cloudMsg { margin: 5px 2px 0; font-size: 12px; color: var(--dim); }
   #continueGp small { display: block; font-weight: 600; font-size: 12px; opacity: .8; }
   .levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .levels button { padding: 7px 0; font-size: 13px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 7px; }
@@ -284,6 +292,11 @@
 <aside id="panel">
   <button id="start">Start race</button>
   <button id="continueGp" hidden></button>
+  <div id="cloud">
+    <button id="cloudBtn"><svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 2.9-2.2 5.4-4.7 7.1l7.6 5.9c4.4-4.1 6.9-10.1 6.9-17.5z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.2 0-11.5-4.2-13.4-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>Sign in with Google</button>
+    <div id="cloudIn" hidden><span>&#9729;&#65039;</span><b id="cloudName"></b><button id="cloudOut">Sign out</button></div>
+    <p id="cloudMsg">Save your kart, records and Grand Prix to your Google account, on every device</p>
+  </div>
   <div id="netPanel">
     <h2>Race friends</h2>
       <label>Your name <input type="text" id="netName" maxlength="12" autocomplete="off" spellcheck="false"></label>
@@ -404,11 +417,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-27.1';
+const BUILD = '2026-11-27.2';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['27 Nov 2026', [
+    'Sign in with Google (top of the menu) to save all your progress to your account: your kart, name, settings, phone controls, time trial records and ghosts, and your Grand Prix. Sign in on another device and it all comes with you',
     'Grand Prix progress is saved after every race. Close the game and tap ▶ Continue Grand Prix in the menu to carry on where you left off',
     'Fixed: in a room, races 4 and 5 of a Grand Prix lost the cup points',
   ]],
@@ -5618,6 +5632,163 @@ function netInterpolate() {
 
 try { $('netName').value = localStorage.getItem('kart-name') || ''; } catch (e) {}
 drawRoom();   // shows Continue Grand Prix if a cup is saved, and the right Start label
+
+// ---------- Cloud save: Sign in with Google ----------
+// Firebase project 'project-kart': Google sign-in, and one Firestore doc per player at players/{uid} holding a copy of
+// every save the game keeps in localStorage. The security rules let each person read and write only their own doc.
+// This config isn't secret: every Firebase website ships it in its page.
+const FB_CONFIG = {
+  apiKey: 'AIzaSyDsjbYv_7JUi05HEu2sqEjkFgkDZxFAnrA', authDomain: 'project-kart.firebaseapp.com', projectId: 'project-kart',
+  storageBucket: 'project-kart.firebasestorage.app', messagingSenderId: '1084436000059', appId: '1:1084436000059:web:37a74eeb7ba09484c19b1e',
+};
+const FB_URL = n => `https://www.gstatic.com/firebasejs/10.14.1/firebase-${n}.js`;
+const SYNC_KEYS = ['kart-custom', 'kart-race', 'kart-controls', 'kart-muted', 'kart-name', 'kart-tt', 'kart-ghost', 'kart-gp'];
+const cloud = { fb: null, loading: null, user: null, timer: 0, applying: false, last: '', status: '' };
+const localAt = () => +localStorage.getItem('kart-local-at') || 0;
+// Every save in the game goes through localStorage, so watching setItem/removeItem catches all of them.
+// 'kart-local-at' is when this device last really changed something (writing the same value again doesn't count).
+{
+  const set = Storage.prototype.setItem, rem = Storage.prototype.removeItem;
+  const watch = (st, k, run) => {
+    if (st !== localStorage || !SYNC_KEYS.includes(k) || cloud.applying) return run();
+    const before = localStorage.getItem(k); run();
+    if (localStorage.getItem(k) === before) return;
+    set.call(localStorage, 'kart-local-at', String(Math.max(Date.now(), localAt() + 1)));   // always newer, even if a device's clock is off
+    cloudDirty();
+  };
+  Storage.prototype.setItem = function (k, v) { watch(this, k, () => set.call(this, k, v)); };
+  Storage.prototype.removeItem = function (k) { watch(this, k, () => rem.call(this, k)); };
+}
+function fbLoad() {
+  return cloud.loading = cloud.loading || Promise.all(['app', 'auth', 'firestore'].map(n => import(FB_URL(n)))).then(([app, A, F]) => {
+    const a = app.initializeApp(FB_CONFIG);
+    cloud.fb = { A, F, auth: A.getAuth(a), db: F.getFirestore(a) };
+    A.onAuthStateChanged(cloud.fb.auth, u => {
+      cloud.user = u;
+      try { if (u) localStorage.setItem('kart-cloud-on', '1'); } catch (e) {}
+      if (u) cloudPull(); else cloudUi();
+    });
+    return cloud.fb;
+  }).catch(e => { cloud.loading = null; throw e; });
+}
+function cloudUi(status) {
+  if (status !== undefined) cloud.status = status;
+  const u = cloud.user;
+  $('cloudBtn').hidden = !!u;
+  $('cloudIn').hidden = !u;
+  if (u) $('cloudName').textContent = (u.displayName || u.email || 'Signed in').split(' ')[0];
+  $('cloudMsg').textContent = cloud.status || (u ? 'All your progress is saved to your Google account ✓' : 'Save your kart, records and Grand Prix to your Google account, on every device');
+}
+function cloudData() {
+  const data = {};
+  for (const k of SYNC_KEYS) { const v = localStorage.getItem(k); if (v !== null) data[k] = v; }
+  // A Firestore doc holds up to 1MB. Ghosts are the big part (~50KB a track), so they're the first thing left out.
+  if (JSON.stringify(data).length > 900000) delete data['kart-ghost'];
+  return data;
+}
+function cloudDirty() {
+  if (!cloud.user) return;
+  clearTimeout(cloud.timer);
+  cloud.timer = setTimeout(cloudPush, 2500);
+}
+async function cloudPush() {
+  clearTimeout(cloud.timer); cloud.timer = 0;
+  if (!cloud.user || !cloud.fb) return;
+  const data = cloudData(), json = JSON.stringify(data);
+  if (json === cloud.last) return;
+  const { F, db } = cloud.fb, uid = cloud.user.uid;
+  cloudUi('Saving…');
+  try {
+    await F.setDoc(F.doc(db, 'players', uid), { at: localAt(), build: BUILD, data });
+    if (cloud.user?.uid === uid) { cloud.last = json; cloudUi(''); }
+  } catch (e) { cloudUi(`Couldn't save to your account (${e.code || e.message}). It'll try again next time something changes.`); }
+}
+// Time trial records: the best lap and the best 3 laps on each track, from either side
+function mergeTt(a, b) {
+  const A = JSON.parse(a || '{}'), B = JSON.parse(b || '{}'), out = { ...A };
+  for (const [t, r] of Object.entries(B)) {
+    const m = out[t];
+    if (!m) { out[t] = r; continue; }
+    out[t] = { ...m, lap: Math.min(m.lap ?? Infinity, r.lap ?? Infinity) };
+    if (m.total || r.total) out[t].total = Math.min(m.total || Infinity, r.total || Infinity);
+  }
+  return JSON.stringify(out);
+}
+// Ghosts: keep the faster one on each track
+function mergeGhost(a, b) {
+  const A = JSON.parse(a || '{}'), B = JSON.parse(b || '{}'), out = { ...A };
+  for (const [t, g] of Object.entries(B)) if (!out[t] || g.lap < out[t].lap) out[t] = g;
+  return JSON.stringify(out);
+}
+// Signing in: blend what's in the account with what's on this device. Records and ghosts keep the best of both;
+// everything else comes from whichever side changed most recently. Then the account gets the blended copy.
+function cloudMerge(c) {
+  const cAt = c.at || 0, lAt = localAt(), out = {};
+  for (const k of SYNC_KEYS) {
+    const L = localStorage.getItem(k), C = c.data?.[k] ?? null;
+    try {
+      if (k === 'kart-tt') { out[k] = L || C ? mergeTt(L, C) : null; continue; }
+      if (k === 'kart-ghost') { out[k] = L || C ? mergeGhost(L, C) : null; continue; }
+    } catch (e) {}
+    // A finished cup has no save, so for the Grand Prix "nothing" is an answer too
+    out[k] = k === 'kart-gp' ? (cAt > lAt ? C : L) : cAt > lAt ? C ?? L : L ?? C;
+  }
+  let changed = false;
+  cloud.applying = true;
+  try {
+    for (const k of SYNC_KEYS) {
+      if (out[k] === localStorage.getItem(k)) continue;
+      changed = true;
+      if (out[k] == null) localStorage.removeItem(k); else localStorage.setItem(k, out[k]);
+    }
+    localStorage.setItem('kart-local-at', String(Math.max(cAt, lAt)));
+  } finally { cloud.applying = false; }
+  return changed;
+}
+async function cloudPull() {
+  const { F, db } = cloud.fb, uid = cloud.user.uid;
+  cloudUi('Loading your saved progress…');
+  try {
+    const snap = await F.getDoc(F.doc(db, 'players', uid));
+    if (cloud.user?.uid !== uid) return;
+    const changed = snap.exists() ? cloudMerge(snap.data()) : false;
+    cloud.last = '';
+    await cloudPush();
+    cloudUi('');
+    // The game read its saves when the page opened, so load the page again to use the ones from the account
+    if (changed) {
+      if (!race && !net.room) location.reload();
+      else cloudUi('Your saved progress is ready. It loads next time you open the game.');
+    }
+  } catch (e) { cloudUi(`Couldn't load your saved progress (${e.code || e.message})`); }
+}
+$('cloudBtn').onclick = async () => {
+  cloudUi('Opening Google sign-in…');
+  try {
+    const { A, auth } = cloud.fb || await fbLoad();
+    await A.signInWithPopup(auth, new A.GoogleAuthProvider());
+  } catch (e) {
+    const c = e.code || '';
+    cloudUi(c === 'auth/popup-closed-by-user' || c === 'auth/cancelled-popup-request' ? ''
+      : c === 'auth/popup-blocked' ? 'Your browser blocked the sign-in window. Tap Sign in with Google again.'
+      : c === 'auth/unauthorized-domain' ? 'Signing in only works on the online game at itzfireway.github.io/project-kart'
+      : `Couldn't sign in (${c || e.message})`);
+  }
+};
+$('cloudOut').onclick = async () => {
+  if (cloud.timer) await cloudPush();
+  try { localStorage.removeItem('kart-cloud-on'); } catch (e) {}
+  cloud.last = '';
+  cloudUi('Signed out. Your progress stays on this device too.');
+  try { await cloud.fb.A.signOut(cloud.fb.auth); } catch (e) {}
+};
+// Send a pending save straight away when the game is closed or put in the background
+addEventListener('visibilitychange', () => { if (document.hidden && cloud.timer) cloudPush(); });
+addEventListener('pagehide', () => { if (cloud.timer) cloudPush(); });
+cloudUi();
+// Load Firebase straight away if you signed in before (it signs you back in), otherwise a moment after the page
+// opens so the sign-in window can open the instant the button is tapped
+try { if (localStorage.getItem('kart-cloud-on') === '1') fbLoad().catch(() => cloudUi("Couldn't reach your Google account. Your progress is still saved on this device.")); else setTimeout(() => fbLoad().catch(() => {}), 2500); } catch (e) {}
 $('netName').oninput = () => { try { localStorage.setItem('kart-name', $('netName').value.trim()); } catch (e) {} if (net.room) netProfileChanged(); };
 $('netCreate').onclick = netCreate;
 $('netJoin').onclick = () => { goFullscreen(); netJoin(); };
