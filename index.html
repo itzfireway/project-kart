@@ -43,6 +43,8 @@
   input[type=number] { width: 64px; padding: 5px 7px; font: inherit; color: inherit; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); border-radius: 7px; }
   #start { width: 100%; padding: 13px; font-size: 18px; font-weight: 900; font-style: italic; text-transform: uppercase; color: #14161d; background: var(--hot); border: 0; border-radius: 10px; }
   #start:hover { filter: brightness(1.08); }
+  #continueGp { width: 100%; margin-top: 8px; padding: 11px; font-size: 15px; font-weight: 800; color: #14161d; background: #ffcf33; border: 0; border-radius: 10px; }
+  #continueGp small { display: block; font-weight: 600; font-size: 12px; opacity: .8; }
   .levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .levels button { padding: 7px 0; font-size: 13px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 7px; }
   .levels button[aria-pressed=true] { border-color: var(--hot); background: rgba(255, 207, 51, .12); }
@@ -281,6 +283,7 @@
 <h1>Project <span>Kart</span></h1>
 <aside id="panel">
   <button id="start">Start race</button>
+  <button id="continueGp" hidden></button>
   <div id="netPanel">
     <h2>Race friends</h2>
       <label>Your name <input type="text" id="netName" maxlength="12" autocomplete="off" spellcheck="false"></label>
@@ -401,10 +404,14 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-24.5';
+const BUILD = '2026-11-27.1';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
+  ['27 Nov 2026', [
+    'Grand Prix progress is saved after every race. Close the game and tap ▶ Continue Grand Prix in the menu to carry on where you left off',
+    'Fixed: in a room, races 4 and 5 of a Grand Prix lost the cup points',
+  ]],
   ['24 Nov 2026', [
     'Look back: hold C, or the 👀 button on a phone, to see who\'s behind you',
     'Phones: the hit message and the 👀 button can be moved and resized in Move & resize controls',
@@ -4052,6 +4059,7 @@ function drawResults() {
   const laps = race.you.laps, best = laps.length ? Math.min(...laps) : null;
   const bestLine = best !== null ? `<p class="best">Your best lap: ${fmtTime(best)}${laps.length > 1 ? ` &nbsp;·&nbsp; ${laps.map(fmtTime).join(' / ')}` : ''}</p>` : '';
   $('overlayBody').innerHTML = `<h3>${MEDALS[place - 1] || ''} ${head}</h3>${bestLine}<table>${rows}</table>${race.gp ? gpTable() : ''}`;
+  saveCupAfterRace();
   $('resume').hidden = true;
   $('again').hidden = race.online && !net.host;
   const nextGp = race.gp && race.gp.round + 1 < GP_TRACKS.length ? TRACKS[race.gp.order[race.gp.round + 1]] : null;
@@ -4096,6 +4104,35 @@ function gpNext() {
   gp.pts = pts;
   gp.round++;
   if (gp.round >= GP_TRACKS.length) gp = newGp();
+}
+// Your own cup is saved after every race (localStorage 'kart-gp'), so you can close the game and carry on later.
+// Quitting in the middle of a race keeps the points from before it, and Continue starts that race again.
+function savedCup() {
+  try {
+    const c = JSON.parse(localStorage.getItem('kart-gp') || 'null');
+    if (!c || !Number.isInteger(c.round) || c.round < 1 || c.round >= GP_TRACKS.length) return null;
+    if (!Array.isArray(c.order) || c.order.length !== GP_TRACKS.length || !GP_TRACKS.every(t => c.order.includes(t))) return null;
+    if (!c.pts || typeof c.pts !== 'object') return null;
+    return { round: c.round, pts: c.pts, order: c.order };
+  } catch (e) { return null; }
+}
+function saveCup(c) { try { if (c) localStorage.setItem('kart-gp', JSON.stringify(c)); else localStorage.removeItem('kart-gp'); } catch (e) {} }
+// After a solo cup race: bank the points into the save, or clear it once the cup is over
+function saveCupAfterRace() {
+  if (!race?.gp || race.online) return;
+  const next = race.gp.round + 1;
+  if (next >= GP_TRACKS.length) return saveCup(null);
+  const pts = {};
+  for (const t of gpTotals()) pts[gpKey(t.k)] = t.pts;
+  saveCup({ round: next, pts, order: race.gp.order });
+}
+function drawContinue() {
+  const c = !net.room && state.mode === 'gp' ? savedCup() : null;
+  $('continueGp').hidden = !c;
+  if (!c) return;
+  const all = Object.entries(c.pts).sort((a, b) => b[1] - a[1]), me = all.findIndex(([k]) => k === 'You') + 1;
+  const t = TRACKS[c.order[c.round]];
+  $('continueGp').innerHTML = `▶ Continue Grand Prix<small>Race ${c.round + 1} of ${GP_TRACKS.length}: ${t.icon} ${t.name}${me ? ` · you're ${ordinal(me)} with ${c.pts.You} pts` : ''}</small>`;
 }
 
 function setQuitLabel() {
@@ -5020,6 +5057,13 @@ $('start').onclick = () => {
   if (!net.room) startRace();
   else if (net.host) netStartRace();
 };
+$('continueGp').onclick = () => {
+  const c = savedCup();
+  if (!c || net.room) return drawContinue();
+  goFullscreen();
+  gp = c;
+  startRace();
+};
 $('resume').onclick = togglePause;
 $('again').onclick = () => {
   if (race?.gp && race.over) gpNext();
@@ -5032,6 +5076,7 @@ $('quit').onclick = () => {
   if (!race?.online) leaveRace();
   else if (net.host) { netBroadcast({ t: 'end' }); leaveRace(); netMessage(''); }
   else { netToHost({ t: 'left' }); leaveRace(); netMessage('Waiting for the next race'); }
+  drawRoom();
 };
 
 addEventListener('resize', () => {
@@ -5075,7 +5120,8 @@ function drawRoom() {
   $('netCpuRow').hidden = !net.host;
   $('hostNote').hidden = !inRoom || net.host;
   $('start').disabled = inRoom && !net.host;
-  const what = state.mode === 'gp' ? 'Start Grand Prix' : state.mode === 'tt' ? 'Start time trial' : 'Start race';
+  drawContinue();
+  const what = state.mode === 'gp' ? (!inRoom && savedCup() ? 'New Grand Prix' : 'Start Grand Prix') : state.mode === 'tt' ? 'Start time trial' : 'Start race';
   $('start').textContent = !inRoom ? what : net.host ? `${what} (${net.players.length} of ${MAX_PLAYERS})` : 'Host starts the race';
   if (!inRoom) return;
   $('netCodeShow').textContent = net.room.toUpperCase();
@@ -5495,7 +5541,7 @@ function netStartRace() {
   netCheckReady();
 }
 function cleanGp(g, racers) {
-  if (!g || typeof g !== 'object' || ![0, 1, 2].includes(g.round)) return null;
+  if (!g || typeof g !== 'object' || !Number.isInteger(g.round) || g.round < 0 || g.round >= GP_TRACKS.length) return null;
   const order = Array.isArray(g.order) && g.order.length === GP_TRACKS.length && GP_TRACKS.every(t => g.order.includes(t)) ? [...g.order] : [...GP_TRACKS];
   const pts = {};
   for (const p of racers) { const v = +g.pts?.[p.id]; if (Number.isFinite(v)) pts[p.id] = clamp(Math.round(v), 0, 999); }
@@ -5571,6 +5617,7 @@ function netInterpolate() {
 }
 
 try { $('netName').value = localStorage.getItem('kart-name') || ''; } catch (e) {}
+drawRoom();   // shows Continue Grand Prix if a cup is saved, and the right Start label
 $('netName').oninput = () => { try { localStorage.setItem('kart-name', $('netName').value.trim()); } catch (e) {} if (net.room) netProfileChanged(); };
 $('netCreate').onclick = netCreate;
 $('netJoin').onclick = () => { goFullscreen(); netJoin(); };
