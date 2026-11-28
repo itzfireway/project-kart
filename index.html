@@ -226,6 +226,13 @@
   .touchOnly { display: none; }
   body.touch .touchOnly { display: block; }
   body.touch div.touchOnly.levels { display: grid; }
+  body.touch .pcOnly { display: none; }
+  #keyList { display: grid; grid-template-columns: 1fr auto auto; gap: 5px 6px; align-items: center; font-size: 14px; }
+  #keyList button { min-width: 74px; padding: 6px 8px; font-size: 13px; font-weight: 700; color: var(--text); background: rgba(255, 255, 255, .06); border: 1px solid var(--line); border-radius: 7px; }
+  #keyList button:hover { border-color: var(--hot); }
+  #keyList button.empty { color: var(--dim); font-weight: 400; }
+  #keyList button.wait { color: #14161d; background: var(--hot); border-color: var(--hot); }
+  #keyMsg { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
   #steerStyles button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px 7px; font-weight: 700; }
   #steerStyles svg { width: 100%; max-width: 86px; height: auto; color: #fff; }
   #steerStyles button[aria-pressed=true] svg { color: var(--hot); }
@@ -382,7 +389,11 @@
     <h2 class="touchOnly">Phone controls</h2>
     <div class="levels touchOnly" id="steerStyles"></div>
     <p class="touchOnly" id="ctlMsg"></p>
-    <button class="wideBtn touchOnly" id="editPadsBtn">&#9995; Move &amp; resize controls</button>
+    <h2 class="pcOnly">Keyboard controls</h2>
+    <div class="pcOnly" id="keyList"></div>
+    <p class="pcOnly" id="keyMsg">Click a key to change it. Each action can have two keys.</p>
+    <button class="wideBtn pcOnly" id="keyReset">&#8634; Reset keys</button>
+    <button class="wideBtn" id="editPadsBtn">&#9995; Move &amp; resize controls</button>
     <h2>Help</h2>
     <button id="guideBtn">&#127873; Item guide</button>
     <button id="logBtn">&#128220; Update log</button>
@@ -408,7 +419,7 @@
   <div id="big"></div>
   <div id="banner"></div>
   <div id="wrong" hidden>Wrong way</div>
-  <div id="help">W / &uarr; go &nbsp; A D / &larr; &rarr; steer &nbsp; S / &darr; brake &nbsp; Shift or Space drift &nbsp; E use item &nbsp; C look back &nbsp; R back on track &nbsp; Esc pause &nbsp; M mute<br>Rocket start: press go just as the last red light comes on (on a phone, hold Drift)</div>
+  <div id="help"><span id="keyHelp">W / &uarr; go &nbsp; A D / &larr; &rarr; steer &nbsp; S / &darr; brake &nbsp; Shift or Space drift &nbsp; E use item &nbsp; C look back &nbsp; R back on track &nbsp; Esc pause &nbsp; M mute</span><br>Rocket start: press go just as the last red light comes on (on a phone, hold Drift)</div>
   <canvas id="map" width="190" height="190" data-pad="Map"></canvas>
   <div id="dash" data-pad="Speed &amp; boost"><b id="speed">0</b> km/h<div id="chargeBar"><i id="charge"></i></div></div>
   <div id="pads">
@@ -465,11 +476,12 @@
 'use strict';
 // Bump BUILD on every change. When the page opens it fetches the newest copy from the server, skipping the
 // browser's saved one, and if that copy has a different BUILD it reloads once so you're never stuck on an old version.
-const BUILD = '2026-11-28.1';
+const BUILD = '2026-11-28.2';
 
 // Update log shown from the button at the bottom of the menu. Newest first: add a line here with every change.
 const UPDATES = [
   ['28 Nov 2026', [
+    'On a computer you can now change the keys (More > Keyboard controls) and move & resize the speed meter, map, place, lap and hit message (More > Move & resize controls)',
     'The More tab now says who made the game, at the very bottom',
   ]],
   ['27 Nov 2026', [
@@ -3712,12 +3724,12 @@ function leaveRace() {
 }
 
 function readPlayer(k) {
-  const left = keys.ArrowLeft || keys.KeyA, right = keys.ArrowRight || keys.KeyD;
+  const left = held('left'), right = held('right');
   // On a phone the kart drives itself forward, so your thumbs only have to steer, drift and brake
-  k.throttle = keys.ArrowUp || keys.KeyW || (TOUCH && !touch.brake) ? 1 : 0;
-  k.brake = keys.ArrowDown || keys.KeyS || touch.brake ? 1 : 0;
+  k.throttle = held('gas') || (TOUCH && !touch.brake) ? 1 : 0;
+  k.brake = held('brake') || touch.brake ? 1 : 0;
   k.wantSteer = clamp((left ? 1 : 0) - (right ? 1 : 0) + touch.steer, -1, 1);
-  k.wantDrift = !!(keys.ShiftLeft || keys.ShiftRight || keys.Space || touch.drift);
+  k.wantDrift = !!(held('drift') || touch.drift);
   k.wantItem = itemReq;
   itemReq = false;
 }
@@ -3998,7 +4010,7 @@ function stepRace(h) {
 // On a phone the kart drives itself, so the Drift button stands in for go during the countdown.
 const ROCKET_EARLY = -1, ROCKET_LATE = -.3, ROCKET_BOOST = 1.5, GOOD_BOOST = .6, STALL_TIME = .9;
 function watchLaunch(k, t) {
-  const gas = keys.ArrowUp || keys.KeyW || (TOUCH && touch.drift);
+  const gas = held('gas') || (TOUCH && touch.drift);
   if (!gas) k.gasFrom = null; else if (k.gasFrom === null) k.gasFrom = t;
 }
 function launch(k) {
@@ -4540,7 +4552,7 @@ function placeRaceCam(dt) {
   const sh = r.shake * r.shake * .9, jig = () => (Math.random() - .5) * sh;
   // Look back (hold C, or the 👀 button on a phone): the camera jumps in front of the kart and looks behind it
   const fx = Math.sin(r.camYaw), fz = Math.cos(r.camYaw);
-  if ((keys.KeyC || touch.look) && !r.over && !r.paused) {
+  if ((held('look') || touch.look) && !r.over && !r.paused) {
     const d = back * .85;
     raceCam.position.set(k.x + fx * d + jig(), Math.max(k.y + up * .8, floor) + jig(), k.z + fz * d + jig());
     raceCam.lookAt(k.x - fx * 3.5, k.y + 1.3, k.z - fz * 3.5);
@@ -4864,20 +4876,21 @@ function backOnTrack() {
 }
 
 addEventListener('keydown', e => {
-  if (!race) return;
+  if (!race || keyWait) return;
   keys[e.code] = true;
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code) || keyAction(e.code)) e.preventDefault();
   if (e.repeat) return;
+  const act = keyAction(e.code);
   if (race.spec) {
-    if (e.code === 'ArrowLeft' || e.code === 'KeyA') cycleSpec(-1);
-    if (e.code === 'ArrowRight' || e.code === 'KeyD') cycleSpec(1);
+    if (e.code === 'ArrowLeft' || act === 'left') cycleSpec(-1);
+    if (e.code === 'ArrowRight' || act === 'right') cycleSpec(1);
     if (e.code === 'Escape' || e.code === 'Enter') stopWatching();
     return;
   }
-  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
-  if (e.code === 'KeyM') toggleSound();
-  if (e.code === 'KeyR') backOnTrack();
-  if ((e.code === 'KeyE' || e.code === 'KeyX') && race.t > 0) itemReq = true;
+  if (e.code === 'Escape' || act === 'pause') togglePause();
+  if (act === 'mute') toggleSound();
+  if (act === 'reset') backOnTrack();
+  if (act === 'item' && race.t > 0) itemReq = true;
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -4965,7 +4978,9 @@ if (!STEER_STYLES[ctl.style]) ctl.style = 'slider';
 // The speed meter's home moved to the bottom middle (Nov 2026): forget any old saved spot for it once
 if (!ctl.dashMid) { delete ctl.land.dash; delete ctl.port.dash; ctl.dashMid = true; }
 function saveControls() { try { localStorage.setItem('kart-controls', JSON.stringify(ctl)); } catch (e) {} }
-const padSide = () => innerHeight > innerWidth ? 'port' : 'land';
+// Computers get their own layout (only the screen pieces: speed, map, place, lap, hit message)
+const padSide = () => !TOUCH ? 'pc' : innerHeight > innerWidth ? 'port' : 'land';
+if (!ctl.pc) ctl.pc = {};
 // A saved control sits with its centre at x, y (fractions of the screen), scaled by s. No saved spot = the default layout.
 function placePad(id, at) {
   const el = $(id), p = ctl[padSide()][id], st = el.style;
@@ -5107,7 +5122,7 @@ function selectPad(el) {
   const p = el && ctl[padSide()][el.id];
   $('padSize').disabled = !p;
   if (p) $('padSize').value = p.s;
-  $('padSel').textContent = el ? `${el.dataset.pad}: drag to move, slide to resize` : 'Tap a control to resize it';
+  $('padSel').textContent = el ? `${el.dataset.pad}: drag to move, slide to resize` : TOUCH ? 'Tap a control to resize it' : 'Click a piece to resize it';
 }
 function editPads(on) {
   releaseTouch();
@@ -5163,6 +5178,68 @@ $('resetBtn').onclick = backOnTrack;
 $('muteBtn').onclick = toggleSound;
 $('muteBtn').classList.toggle('off', sound.muted);
 setSteerStyle(ctl.style);
+
+// Keyboard controls (computer): every action has two keys, changeable under More > Keyboard controls.
+// Saved in ctl.keys inside 'kart-controls' (so it goes with Google sign-in too). Esc always pauses as well.
+const KEY_ACTIONS = { gas: 'Go', brake: 'Brake / reverse', left: 'Steer left', right: 'Steer right', drift: 'Drift', item: 'Use item', look: 'Look back', reset: 'Back on track', pause: 'Pause', mute: 'Sound on/off' };
+const KEY_DEFAULTS = { gas: ['KeyW', 'ArrowUp'], brake: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'], drift: ['Space', 'ShiftLeft'], item: ['KeyE', 'KeyX'], look: ['KeyC', ''], reset: ['KeyR', ''], pause: ['KeyP', ''], mute: ['KeyM', ''] };
+function cleanKeys() {
+  const k = ctl.keys && typeof ctl.keys === 'object' ? ctl.keys : {};
+  for (const a in KEY_DEFAULTS) {
+    const v = Array.isArray(k[a]) ? k[a] : KEY_DEFAULTS[a];
+    k[a] = [0, 1].map(i => typeof v[i] === 'string' ? v[i] : '');
+  }
+  ctl.keys = k;
+}
+cleanKeys();
+function held(act) { const b = ctl.keys[act]; return !!(keys[b[0]] || keys[b[1]]); }
+function keyAction(code) { if (!code) return null; for (const a in ctl.keys) if (ctl.keys[a].includes(code)) return a; return null; }
+const KEY_NAMES = { Space: 'Space', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', ShiftLeft: 'L Shift', ShiftRight: 'R Shift', ControlLeft: 'L Ctrl', ControlRight: 'R Ctrl', AltLeft: 'L Alt', AltRight: 'R Alt', MetaLeft: 'L Cmd', MetaRight: 'R Cmd', Enter: 'Enter', Tab: 'Tab', CapsLock: 'Caps', Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/' };
+function keyName(code) {
+  if (!code) return '';
+  if (KEY_NAMES[code]) return KEY_NAMES[code];
+  return code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ');
+}
+let keyWait = null; // { act, i, btn } while waiting for a key press
+function drawKeys() {
+  const list = $('keyList'); list.innerHTML = '';
+  for (const [a, name] of Object.entries(KEY_ACTIONS)) {
+    const lab = document.createElement('span'); lab.textContent = name; list.append(lab);
+    for (const i of [0, 1]) {
+      const b = document.createElement('button'), code = ctl.keys[a][i];
+      const waiting = keyWait && keyWait.act === a && keyWait.i === i;
+      b.textContent = waiting ? 'Press a key' : keyName(code) || '—';
+      b.classList.toggle('empty', !code && !waiting); b.classList.toggle('wait', !!waiting);
+      b.onclick = () => { keyWait = waiting ? null : { act: a, i }; drawKeys(); };
+      list.append(b);
+    }
+  }
+  $('keyMsg').textContent = keyWait ? 'Press the new key. Backspace clears it, Esc cancels.' : 'Click a key to change it. Each action can have two keys.';
+  drawKeyHelp();
+}
+function drawKeyHelp() {
+  if (!$('keyHelp')) return; // phones show their own help
+  const k = a => ctl.keys[a].filter(Boolean).map(keyName).join(' / ') || '—';
+  $('keyHelp').innerHTML = [[k('gas'), 'go'], [`${k('left')} ${k('right')}`, 'steer'], [k('brake'), 'brake'], [k('drift'), 'drift'], [k('item'), 'use item'],
+    [k('look'), 'look back'], [k('reset'), 'back on track'], [k('pause') === '—' ? 'Esc' : k('pause') + ' / Esc', 'pause'], [k('mute'), 'sound']]
+    .map(([key, what]) => `${key.replace(/&/g, '&amp;').replace(/</g, '&lt;')} ${what}`).join(' &nbsp; ');
+}
+// Grabs the next key press while a key button is waiting (before the game sees it)
+addEventListener('keydown', e => {
+  if (!keyWait) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const { act, i } = keyWait;
+  keyWait = null;
+  if (e.code === 'Escape') { drawKeys(); return; }
+  const code = e.code === 'Backspace' || e.code === 'Delete' ? '' : e.code;
+  // A key can only do one thing: take it off anything else first
+  if (code) for (const a in ctl.keys) ctl.keys[a] = ctl.keys[a].map(c => c === code ? '' : c);
+  ctl.keys[act][i] = code;
+  saveControls(); drawKeys();
+}, true);
+$('keyReset').onclick = () => { delete ctl.keys; cleanKeys(); keyWait = null; saveControls(); drawKeys(); };
+drawKeys();
+if (!TOUCH) $('padEdit').querySelector('b').textContent = 'Drag the screen pieces anywhere';
 if (TOUCH) {
   addEventListener('contextmenu', e => e.preventDefault());
   document.addEventListener('gesturestart', e => e.preventDefault());
